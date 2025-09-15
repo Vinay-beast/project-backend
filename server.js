@@ -22,27 +22,10 @@ app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Single CORS config
-const allowedOrigins = [
-    'http://localhost:3000',
-    'http://localhost:5500',
-    'http://127.0.0.1:5500',
-    process.env.FRONTEND_URL
-].filter(Boolean);
-
+// This is the only CORS code you need
 app.use(cors({
-    origin: (origin, cb) => {
-        if (!origin) return cb(null, true);
-        if (allowedOrigins.includes(origin) || /^http:\/\/localhost:\d+$/.test(origin)) {
-            return cb(null, true);
-        }
-        return cb(null, false);
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
+    origin: process.env.FRONTEND_URL
 }));
-app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
