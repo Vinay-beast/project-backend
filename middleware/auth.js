@@ -4,7 +4,7 @@ const pool = require('../config/database');
 
 module.exports = async (req, res, next) => {
     try {
-        // Accept: x-auth-token OR Authorization: Bearer <token>
+        // Accept x-auth-token OR Authorization: Bearer <token>
         let token = req.header('x-auth-token');
         const authHeader = req.header('authorization') || req.header('Authorization');
         if (!token && authHeader && /^Bearer\s+/i.test(authHeader)) {
@@ -15,33 +15,42 @@ module.exports = async (req, res, next) => {
             return res.status(401).json({ message: 'No token, authorization denied' });
         }
 
-        // Verify token
         const secret = process.env.JWT_SECRET || 'dev_secret';
-        const decoded = jwt.verify(token, secret);
+        let decoded;
+        try {
+            decoded = jwt.verify(token, secret);
+        } catch (err) {
+            if (err.name === 'TokenExpiredError') {
+                return res.status(401).json({ message: 'Token expired, please log in again' });
+            }
+            return res.status(401).json({ message: 'Invalid token' });
+        }
 
-        // Support multiple payload shapes: { userId }, { id }, or { user: { id } }
+        // Accept multiple payload shapes
         const userId = decoded.userId || decoded.id || decoded.user?.id;
         if (!userId) {
             return res.status(401).json({ message: 'Invalid token payload' });
         }
 
-        // Ensure user still exists
+        // Make sure user still exists and fetch is_admin
         const [rows] = await pool.query(
-            'SELECT id, name, email FROM users WHERE id = ? LIMIT 1',
+            'SELECT id, name, email, is_admin FROM users WHERE id = ? LIMIT 1',
             [userId]
         );
         if (!rows || rows.length === 0) {
             return res.status(401).json({ message: 'User no longer exists' });
         }
 
-        // Attach a consistent shape on req.user
-        req.user = { id: rows[0].id, name: rows[0].name, email: rows[0].email };
+        req.user = {
+            id: rows[0].id,
+            name: rows[0].name,
+            email: rows[0].email,
+            is_admin: !!rows[0].is_admin
+        };
+
         next();
     } catch (err) {
-        console.error('Auth middleware error:', err.message);
-        if (err.name === 'TokenExpiredError') {
-            return res.status(401).json({ message: 'Token expired, please log in again' });
-        }
+        console.error('Auth middleware error:', err);
         return res.status(401).json({ message: 'Invalid token' });
     }
 };

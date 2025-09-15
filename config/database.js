@@ -1,11 +1,10 @@
+// config/database.js - AFTER (Use this code)
 const mysql = require('mysql2/promise');
-require('dotenv').config();
 
+// This single line connects using the URL provided by Render.
+// It's simpler and more secure for production.
 const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    uri: process.env.DATABASE_URL,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
