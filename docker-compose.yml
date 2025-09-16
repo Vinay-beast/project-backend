@@ -13,7 +13,6 @@ services:
     command: ["/wait-for.sh", "mysql", "npm", "start"]
 
 
-
   mysql:
     image: mysql:8
     restart: always

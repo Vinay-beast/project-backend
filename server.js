@@ -1,6 +1,6 @@
 // server.js
 require('dotenv').config();
-
+console.log("Is the JWT_SECRET loaded?", process.env.JWT_SECRET ? "Yes, it is." : "NO, IT IS MISSING!");
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
