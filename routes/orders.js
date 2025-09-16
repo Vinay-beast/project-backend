@@ -16,7 +16,28 @@ function setNoCache(res) {
 
 function softStatusPatch(order) {
     const now = new Date();
-    // ... (Your helper function is unchanged)
+
+    // Rent: due passed -> Completed
+    if (order.mode === 'rent' && order.rental_end) {
+        if (new Date(order.rental_end) <= now && order.status !== 'Completed') {
+            order.status = 'Completed';
+        } else if (new Date(order.rental_end) > now && !['Active', 'Completed'].includes(order.status)) {
+            order.status = 'Active';
+        }
+    }
+
+    // Buy: ETA passed -> Delivered
+    if (order.mode === 'buy' && order.delivery_eta) {
+        if (order.status === 'Pending' && new Date(order.delivery_eta) <= now) {
+            order.status = 'Delivered';
+        }
+    }
+
+    // Gift: always Delivered (digital)
+    if (order.mode === 'gift' && order.status !== 'Delivered') {
+        order.status = 'Delivered';
+    }
+
     return order;
 }
 
@@ -38,7 +59,7 @@ router.post('/', auth, async (req, res) => {
             shipping_speed
         } = req.body;
 
-        // Basic validation (unchanged)
+        // Basic validation
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ message: 'Order must contain at least one item' });
         }
@@ -53,10 +74,10 @@ router.post('/', auth, async (req, res) => {
         await conn.beginTransaction();
 
         try {
-            // ===== FIX STARTS HERE =====
+            // ===== FIX FOR RENTAL PRICE BUG STARTS HERE =====
 
             let total = 0;
-            const processedItems = []; // Array to hold items with their correct prices
+            const processedItems = []; // We'll store items with their corrected prices here
 
             // First, loop through items to validate them and calculate the correct total price
             for (const item of items) {
@@ -98,14 +119,12 @@ router.post('/', auth, async (req, res) => {
 
             // ===== END OF PRICE CALCULATION FIX =====
 
-
-            // shipping cost logic is unchanged
+            // Your original code for shipping, dates, and status remains the same
             if (mode === 'buy') {
                 const shippingCosts = { standard: 30, express: 70, priority: 120 };
                 total += shippingCosts[shipping_speed] ?? 30;
             }
 
-            // delivery_eta & rental_end logic is unchanged
             let deliveryEta = null;
             let rentalEnd = null;
             if (mode === 'buy') {
@@ -119,10 +138,8 @@ router.post('/', auth, async (req, res) => {
                 rentalEnd.setDate(rentalEnd.getDate() + days);
             }
 
-            // initial status logic is unchanged
             const initialStatus = mode === 'buy' ? 'Pending' : mode === 'rent' ? 'Active' : 'Delivered';
 
-            // insert order with the CORRECTED total
             const [orderResult] = await conn.query(
                 `INSERT INTO orders (
                     user_id, mode, total, shipping_address_id,
@@ -139,7 +156,7 @@ router.post('/', auth, async (req, res) => {
             );
             const orderId = orderResult.insertId;
 
-            // ===== FIX STARTS HERE (PART 2) =====
+            // ===== FIX FOR RENTAL PRICE BUG (PART 2) =====
 
             // Now, insert the items using the `processedItems` array which has the CORRECT prices
             for (const item of processedItems) {
@@ -151,7 +168,7 @@ router.post('/', auth, async (req, res) => {
 
             // ===== END OF ITEM INSERTION FIX =====
 
-            // gifts logic is unchanged
+            // Your original gifting logic remains the same
             if (mode === 'gift') {
                 let recipientUserId = null;
                 const [u] = await conn.query('SELECT id FROM users WHERE email = ?', [gift_email]);
@@ -184,8 +201,7 @@ router.post('/', auth, async (req, res) => {
     }
 });
 
-
-// All of your GET routes are unchanged and correct as we fixed them before.
+// Your GET routes are unchanged and correct as we fixed them before.
 /* ------------------------ list current user's orders ------------------------ */
 router.get('/', auth, async (req, res) => {
     try {
@@ -227,7 +243,13 @@ router.get('/:id', auth, async (req, res) => {
             [req.params.id]
         );
         order.items = items;
+
+        // I'm adding your helper functions back in here where they belong.
+        softStatusPatch(order);
+        setNoCache(res);
+
         return res.json(order);
+
     } catch (err) {
         console.error('Error fetching single order:', err);
         return res.status(500).json({ message: 'Server error while fetching order' });
