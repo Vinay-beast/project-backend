@@ -210,40 +210,47 @@ router.post('/', auth, async (req, res) => {
  * GET /api/orders
  * Protected
  */
+/* ---------------------------- get all user orders --------------------------- */
+/**
+ * GET /api/orders
+ * Protected
+ */
 router.get('/', auth, async (req, res) => {
     try {
+        // Step 1: Get all the main orders for the logged-in user.
         const [orders] = await pool.query(
-            `SELECT o.*,
-              JSON_ARRAYAGG(
-                JSON_OBJECT(
-                  'book_id', oi.book_id,
-                  'quantity', oi.quantity,
-                  'price', oi.price
-                )
-              ) AS items
-         FROM orders o
-         LEFT JOIN order_items oi ON o.id = oi.order_id
-        WHERE o.user_id = ?
-        GROUP BY o.id
-        ORDER BY o.created_at DESC`,
+            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
             [req.user.id]
         );
 
-        orders.forEach(o => {
-            if (typeof o.items === 'string') {
-                try { o.items = JSON.parse(o.items); } catch { o.items = []; }
-            }
-            softStatusPatch(o);
-        });
+        if (orders.length === 0) {
+            return res.json([]); // No orders found, return an empty array.
+        }
 
-        setNoCache(res);
-        return res.json(orders);
+        // Step 2: Get all the items for all of those orders in one query.
+        const orderIds = orders.map(o => o.id);
+        const [items] = await pool.query(
+            'SELECT * FROM order_items WHERE order_id IN (?)',
+            [orderIds]
+        );
+
+        // Step 3: Attach the items to their correct order.
+        for (const order of orders) {
+            order.items = items.filter(item => item.order_id === order.id);
+        }
+
+        res.json(orders);
+
     } catch (err) {
-        console.error('Error fetching user orders:', err);
-        return res.status(500).json({ message: 'Server error while fetching orders' });
+        console.error("Error fetching user orders:", err);
+        res.status(500).json({ message: "Server error while fetching orders" });
     }
 });
-
+/* ---------------------------- get a single order --------------------------- */
+/**
+ * GET /api/orders/:id
+ * Protected
+ */
 /* ---------------------------- get a single order --------------------------- */
 /**
  * GET /api/orders/:id
@@ -251,34 +258,29 @@ router.get('/', auth, async (req, res) => {
  */
 router.get('/:id', auth, async (req, res) => {
     try {
+        // Step 1: Get the main order details.
         const [orders] = await pool.query(
-            `SELECT o.*,
-              JSON_ARRAYAGG(
-                JSON_OBJECT(
-                  'book_id', oi.book_id,
-                  'quantity', oi.quantity,
-                  'price', oi.price
-                )
-              ) AS items
-         FROM orders o
-         LEFT JOIN order_items oi ON o.id = oi.order_id
-        WHERE o.id = ? AND o.user_id = ?
-        GROUP BY o.id`,
+            'SELECT * FROM orders WHERE id = ? AND user_id = ?',
             [req.params.id, req.user.id]
         );
 
-        if (!orders.length) {
+        if (orders.length === 0) {
             return res.status(404).json({ message: 'Order not found' });
         }
 
         const order = orders[0];
-        if (typeof order.items === 'string') {
-            try { order.items = JSON.parse(order.items); } catch { order.items = []; }
-        }
-        softStatusPatch(order);
 
-        setNoCache(res);
+        // Step 2: Get all the items for that specific order.
+        const [items] = await pool.query(
+            'SELECT * FROM order_items WHERE order_id = ?',
+            [req.params.id]
+        );
+
+        // Step 3: Attach the items to the order object.
+        order.items = items;
+
         return res.json(order);
+
     } catch (err) {
         console.error('Error fetching single order:', err);
         return res.status(500).json({ message: 'Server error while fetching order' });
