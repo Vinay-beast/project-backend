@@ -10,6 +10,18 @@ const morgan = require('morgan');
 const pool = require('./config/database');         // mysql2/promise pool
 const auth = require('./middleware/auth');         // your JWT middleware
 
+// At the top of server.js, below require('dotenv').config();
+const admin = require('firebase-admin');
+
+// This code reads the secret key from a Render environment variable
+const serviceAccount = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+// ... the rest of your server.js file
+
 // ----------------------------------------
 // Init
 // ----------------------------------------

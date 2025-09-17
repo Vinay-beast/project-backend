@@ -10,3 +10,5 @@ npm-debug.log*
 
 # System files
 .DS_Store
+
+config/serviceAccountKey.json.json

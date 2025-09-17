@@ -83,4 +83,48 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// Add this new route to routes/auth.js before module.exports
+router.post('/google-login', async (req, res) => {
+    const { token } = req.body; // This is the token from the frontend
+
+    try {
+        // 1. Let Firebase verify the token
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        const { name, email, picture } = decodedToken;
+
+        // 2. Check if user exists in your MySQL database
+        const [existingUsers] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+
+        let user;
+        if (existingUsers.length > 0) {
+            // User already exists, so we'll use their data
+            user = existingUsers[0];
+        } else {
+            // User is new, create them in your database
+            const [result] = await pool.query(
+                'INSERT INTO users (name, email, profile_pic, password) VALUES (?, ?, ?, NULL)',
+                [name, email, picture || null]
+            );
+            // Fetch the user we just created
+            const [newUsers] = await pool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+            user = newUsers[0];
+        }
+
+        // 3. Create your own app's JWT token
+        const payload = { userId: user.id, isAdmin: !!user.is_admin };
+        const appToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+        // 4. Send the token and user data back to the frontend
+        res.json({
+            message: "Login successful",
+            token: appToken,
+            user: { id: user.id, name: user.name, email: user.email, is_admin: !!user.is_admin }
+        });
+
+    } catch (error) {
+        console.error("Error with Google login:", error);
+        res.status(500).json({ message: 'Authentication failed' });
+    }
+});
+
 module.exports = router;
