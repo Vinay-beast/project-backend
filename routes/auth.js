@@ -3,6 +3,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const admin = require('firebase-admin');
 
 /**
  * Register a new user
@@ -83,12 +84,11 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// Add this new route to routes/auth.js before module.exports
 router.post('/google-login', async (req, res) => {
-    const { token } = req.body; // This is the token from the frontend
+    const { token } = req.body;
 
     try {
-        // 1. Let Firebase verify the token
+        // 1. Verify the Firebase token
         const decodedToken = await admin.auth().verifyIdToken(token);
         const { name, email, picture } = decodedToken;
 
@@ -97,7 +97,6 @@ router.post('/google-login', async (req, res) => {
 
         let user;
         if (existingUsers.length > 0) {
-            // User already exists, so we'll use their data
             user = existingUsers[0];
         } else {
             // User is new, create them in your database
@@ -105,7 +104,6 @@ router.post('/google-login', async (req, res) => {
                 'INSERT INTO users (name, email, profile_pic, password) VALUES (?, ?, ?, NULL)',
                 [name, email, picture || null]
             );
-            // Fetch the user we just created
             const [newUsers] = await pool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
             user = newUsers[0];
         }
