@@ -74,101 +74,129 @@ router.post('/', auth, async (req, res) => {
         await conn.beginTransaction();
 
         try {
-            // ===== FIX FOR RENTAL PRICE BUG STARTS HERE =====
+            // ---------- PRICE CALCULATION / VALIDATION ----------
+            // We'll compute item-level final prices (based on mode), shipping fee (for buys),
+            // COD fee (if applicable), and the overall total. We also maintain processedItems
+            // array that holds { book_id, quantity, price } to insert into order_items.
 
-            let total = 0;
-            const processedItems = []; // We'll store items with their corrected prices here
+            let total = 0.0;
+            let shippingFee = 0.0;
+            let codFee = 0.0;
+            const processedItems = [];
 
-            // First, loop through items to validate them and calculate the correct total price
+            // Determine rentalDays used for pricing (default 30)
+            const rentalDays = (mode === 'rent') ? (rental_duration && Number(rental_duration) > 0 ? Number(rental_duration) : 30) : null;
+
             for (const item of items) {
-                if (!item.book_id || !item.quantity || item.quantity <= 0) {
+                if (!item.book_id || !item.quantity || Number(item.quantity) <= 0) {
                     throw new Error('Invalid order item data');
                 }
 
-                const [rows] = await conn.query(
-                    'SELECT price, stock FROM books WHERE id = ?',
-                    [item.book_id]
-                );
+                const [rows] = await conn.query('SELECT price, stock FROM books WHERE id = ?', [item.book_id]);
                 if (!rows.length) throw new Error(`Book ${item.book_id} not found`);
 
                 const book = rows[0];
-                const fullPrice = Number(book.price);
+                const fullPrice = Number(book.price || 0);
 
-                // **THIS IS THE FIX**: Calculate the final price based on the order mode
-                let finalPrice = fullPrice; // Default to the book's full price
+                // Price selection:
+                // - buy: full price
+                // - rent: frontend uses 0.35 for 30 days, 0.55 otherwise -> match that
+                // - gift: treat as full price (unless you want different business rules)
+                let finalPrice = fullPrice;
                 if (mode === 'rent') {
-                    const RENTAL_PERCENTAGE = 0.30; // 30% rental fee (you can adjust this)
-                    finalPrice = fullPrice * RENTAL_PERCENTAGE;
-                }
+                    finalPrice = fullPrice * (rentalDays === 30 ? 0.35 : 0.55);
+                } else if (mode === 'gift') {
+                    finalPrice = fullPrice;
+                } // buy: keep fullPrice
 
-                // Add the correctly calculated price to the order total
+                // Add to total (quantity * finalPrice)
                 total += finalPrice * Number(item.quantity);
-                processedItems.push({ ...item, price: finalPrice }); // Store the item with its correct price
 
-                // Stock management logic is unchanged
+                // Save processed item for insertion (store price used)
+                processedItems.push({
+                    book_id: item.book_id,
+                    quantity: Number(item.quantity),
+                    price: Number(finalPrice)
+                });
+
+                // Stock management only for buy
                 if (mode === 'buy') {
                     if (Number(book.stock) < Number(item.quantity)) {
                         throw new Error(`Insufficient stock for book ${item.book_id}`);
                     }
-                    await conn.query(
-                        'UPDATE books SET stock = stock - ? WHERE id = ?',
-                        [item.quantity, item.book_id]
-                    );
+                    await conn.query('UPDATE books SET stock = stock - ? WHERE id = ?', [item.quantity, item.book_id]);
                 }
             }
 
-            // ===== END OF PRICE CALCULATION FIX =====
-
-            // Your original code for shipping, dates, and status remains the same
+            // Shipping for buy mode
             if (mode === 'buy') {
                 const shippingCosts = { standard: 30, express: 70, priority: 120 };
-                total += shippingCosts[shipping_speed] ?? 30;
+                const chosen = shipping_speed || 'standard';
+                shippingFee = Number(shippingCosts[chosen] ?? shippingCosts['standard']);
+                total += shippingFee;
             }
 
+            // COD fee: only applies when buyer chooses COD and shipping is needed (i.e., buy)
+            if (payment_method === 'cod' && mode === 'buy') {
+                codFee = 10;
+                total += codFee;
+            }
+
+            // ---------- dates & status ----------
             let deliveryEta = null;
             let rentalEnd = null;
             if (mode === 'buy') {
-                const etaDays = shipping_speed === 'priority' ? 1 : shipping_speed === 'express' ? 3 : 5;
+                const etaDays = shipping_speed === 'priority' ? 1 : (shipping_speed === 'express' ? 3 : 5);
                 deliveryEta = new Date();
                 deliveryEta.setDate(deliveryEta.getDate() + etaDays);
             }
             if (mode === 'rent') {
-                const days = rental_duration && Number(rental_duration) > 0 ? Number(rental_duration) : 30;
+                const days = rentalDays || 30;
                 rentalEnd = new Date();
                 rentalEnd.setDate(rentalEnd.getDate() + days);
             }
 
             const initialStatus = mode === 'buy' ? 'Pending' : mode === 'rent' ? 'Active' : 'Delivered';
 
+            // ---------- INSERT ORDER ----------
+            // Ensure orders table has shipping_fee and cod_fee columns (see migration if not)
             const [orderResult] = await conn.query(
                 `INSERT INTO orders (
                     user_id, mode, total, shipping_address_id,
                     payment_method, notes, rental_duration,
                     rental_end, gift_email, shipping_speed,
+                    shipping_fee, cod_fee,
                     status, created_at, delivery_eta
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
                 [
-                    req.user.id, mode, total, shipping_address_id || null,
-                    payment_method || null, notes || null, rental_duration || null,
-                    rentalEnd, gift_email || null, mode === 'buy' ? (shipping_speed || 'standard') : null,
-                    initialStatus, deliveryEta
+                    req.user.id,
+                    mode,
+                    Number(total.toFixed(2)),
+                    shipping_address_id || null,
+                    payment_method || null,
+                    notes || null,
+                    rental_duration || null,
+                    rentalEnd,
+                    gift_email || null,
+                    mode === 'buy' ? (shipping_speed || 'standard') : null,
+                    Number(shippingFee),
+                    Number(codFee),
+                    initialStatus,
+                    deliveryEta
                 ]
             );
+
             const orderId = orderResult.insertId;
 
-            // ===== FIX FOR RENTAL PRICE BUG (PART 2) =====
-
-            // Now, insert the items using the `processedItems` array which has the CORRECT prices
-            for (const item of processedItems) {
+            // ---------- INSERT ORDER ITEMS USING processedItems ----------
+            for (const pi of processedItems) {
                 await conn.query(
                     'INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)',
-                    [orderId, item.book_id, item.quantity, item.price] // Use the correct price
+                    [orderId, pi.book_id, pi.quantity, Number(pi.price)]
                 );
             }
 
-            // ===== END OF ITEM INSERTION FIX =====
-
-            // Your original gifting logic remains the same
+            // ---------- GIFTS (unchanged semantics) ----------
             if (mode === 'gift') {
                 let recipientUserId = null;
                 const [u] = await conn.query('SELECT id FROM users WHERE email = ?', [gift_email]);
@@ -185,7 +213,18 @@ router.post('/', auth, async (req, res) => {
             }
 
             await conn.commit();
-            return res.status(201).json({ orderId, message: 'Order created successfully' });
+
+            // Fetch the created order with items to return authoritative values to client
+            const [ordersRows] = await conn.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+            const createdOrder = ordersRows[0] || null;
+            if (createdOrder) {
+                const [orderItemsRows] = await conn.query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
+                createdOrder.items = orderItemsRows || [];
+                // Soft status patch just in case
+                softStatusPatch(createdOrder);
+            }
+
+            return res.status(201).json({ order: createdOrder, message: 'Order created successfully' });
 
         } catch (e) {
             await conn.rollback();
@@ -201,7 +240,6 @@ router.post('/', auth, async (req, res) => {
     }
 });
 
-// Your GET routes are unchanged and correct as we fixed them before.
 /* ------------------------ list current user's orders ------------------------ */
 router.get('/', auth, async (req, res) => {
     try {
@@ -219,7 +257,9 @@ router.get('/', auth, async (req, res) => {
         );
         for (const order of orders) {
             order.items = items.filter(item => item.order_id === order.id);
+            softStatusPatch(order);
         }
+        setNoCache(res);
         res.json(orders);
     } catch (err) {
         console.error("Error fetching user orders:", err);
@@ -243,13 +283,9 @@ router.get('/:id', auth, async (req, res) => {
             [req.params.id]
         );
         order.items = items;
-
-        // I'm adding your helper functions back in here where they belong.
         softStatusPatch(order);
         setNoCache(res);
-
         return res.json(order);
-
     } catch (err) {
         console.error('Error fetching single order:', err);
         return res.status(500).json({ message: 'Server error while fetching order' });
