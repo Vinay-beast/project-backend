@@ -56,7 +56,10 @@ router.post('/', auth, async (req, res) => {
             notes,
             rental_duration,
             gift_email,
-            shipping_speed
+            shipping_speed,
+            phone,
+            save_phone_to_address,
+            new_address // optional: object with label, recipient, street, city, state, zip, phone
         } = req.body;
 
         // Basic validation
@@ -70,15 +73,19 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ message: 'gift_email is required for gifts' });
         }
 
+        // Validate phone (very light validation; adapt if you want stricter)
+        const normalizedPhone = (phone || '').toString().trim();
+        // Optionally check length/characters
+        if (!normalizedPhone) {
+            // require phone for orders (you can relax this if you prefer)
+            return res.status(400).json({ message: 'Phone number is required for order' });
+        }
+
         const conn = await pool.getConnection();
         await conn.beginTransaction();
 
         try {
             // ---------- PRICE CALCULATION / VALIDATION ----------
-            // We'll compute item-level final prices (based on mode), shipping fee (for buys),
-            // COD fee (if applicable), and the overall total. We also maintain processedItems
-            // array that holds { book_id, quantity, price } to insert into order_items.
-
             let total = 0.0;
             let shippingFee = 0.0;
             let codFee = 0.0;
@@ -99,27 +106,21 @@ router.post('/', auth, async (req, res) => {
                 const fullPrice = Number(book.price || 0);
 
                 // Price selection:
-                // - buy: full price
-                // - rent: frontend uses 0.35 for 30 days, 0.55 otherwise -> match that
-                // - gift: treat as full price (unless you want different business rules)
                 let finalPrice = fullPrice;
                 if (mode === 'rent') {
                     finalPrice = fullPrice * (rentalDays === 30 ? 0.35 : 0.55);
                 } else if (mode === 'gift') {
                     finalPrice = fullPrice;
-                } // buy: keep fullPrice
+                }
 
-                // Add to total (quantity * finalPrice)
                 total += finalPrice * Number(item.quantity);
 
-                // Save processed item for insertion (store price used)
                 processedItems.push({
                     book_id: item.book_id,
                     quantity: Number(item.quantity),
                     price: Number(finalPrice)
                 });
 
-                // Stock management only for buy
                 if (mode === 'buy') {
                     if (Number(book.stock) < Number(item.quantity)) {
                         throw new Error(`Insufficient stock for book ${item.book_id}`);
@@ -128,7 +129,7 @@ router.post('/', auth, async (req, res) => {
                 }
             }
 
-            // Shipping for buy mode
+            // Shipping
             if (mode === 'buy') {
                 const shippingCosts = { standard: 30, express: 70, priority: 120 };
                 const chosen = shipping_speed || 'standard';
@@ -136,7 +137,7 @@ router.post('/', auth, async (req, res) => {
                 total += shippingFee;
             }
 
-            // COD fee: only applies when buyer chooses COD and shipping is needed (i.e., buy)
+            // COD
             if (payment_method === 'cod' && mode === 'buy') {
                 codFee = 10;
                 total += codFee;
@@ -158,16 +159,15 @@ router.post('/', auth, async (req, res) => {
 
             const initialStatus = mode === 'buy' ? 'Pending' : mode === 'rent' ? 'Active' : 'Delivered';
 
-            // ---------- INSERT ORDER ----------
-            // Ensure orders table has shipping_fee and cod_fee columns (see migration if not)
+            // ---------- Insert order (including phone snapshot, shipping_fee, cod_fee) ----------
             const [orderResult] = await conn.query(
                 `INSERT INTO orders (
                     user_id, mode, total, shipping_address_id,
                     payment_method, notes, rental_duration,
                     rental_end, gift_email, shipping_speed,
-                    shipping_fee, cod_fee,
+                    shipping_fee, cod_fee, phone,
                     status, created_at, delivery_eta
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
                 [
                     req.user.id,
                     mode,
@@ -181,6 +181,7 @@ router.post('/', auth, async (req, res) => {
                     mode === 'buy' ? (shipping_speed || 'standard') : null,
                     Number(shippingFee),
                     Number(codFee),
+                    normalizedPhone || null,
                     initialStatus,
                     deliveryEta
                 ]
@@ -188,15 +189,29 @@ router.post('/', auth, async (req, res) => {
 
             const orderId = orderResult.insertId;
 
-            // ---------- INSERT ORDER ITEMS USING processedItems ----------
+            // ---------- Insert order items ----------
             for (const pi of processedItems) {
-                await conn.query(
-                    'INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)',
-                    [orderId, pi.book_id, pi.quantity, Number(pi.price)]
-                );
+                await conn.query('INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)', [orderId, pi.book_id, pi.quantity, Number(pi.price)]);
             }
 
-            // ---------- GIFTS (unchanged semantics) ----------
+            // ---------- Save phone to address if requested ----------
+            if (save_phone_to_address) {
+                if (shipping_address_id) {
+                    // ensure the address belongs to the user
+                    await conn.query('UPDATE addresses SET phone = ? WHERE id = ? AND user_id = ?', [normalizedPhone, shipping_address_id, req.user.id]);
+                } else if (new_address && typeof new_address === 'object') {
+                    // insert new address and attach phone
+                    const { label, recipient, street, city, state, zip } = new_address;
+                    if (label && recipient && street && city && state && zip) {
+                        const [resA] = await conn.query('INSERT INTO addresses (user_id, label, recipient, street, city, state, zip, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [req.user.id, label, recipient, street, city, state, zip, normalizedPhone]);
+                        const newAddrId = resA.insertId;
+                        // update the order to reference this address
+                        await conn.query('UPDATE orders SET shipping_address_id = ? WHERE id = ?', [newAddrId, orderId]);
+                    }
+                }
+            }
+
+            // ---------- Gifts logic (unchanged) ----------
             if (mode === 'gift') {
                 let recipientUserId = null;
                 const [u] = await conn.query('SELECT id FROM users WHERE email = ?', [gift_email]);
@@ -214,13 +229,12 @@ router.post('/', auth, async (req, res) => {
 
             await conn.commit();
 
-            // Fetch the created order with items to return authoritative values to client
+            // Return created order with items
             const [ordersRows] = await conn.query('SELECT * FROM orders WHERE id = ?', [orderId]);
             const createdOrder = ordersRows[0] || null;
             if (createdOrder) {
                 const [orderItemsRows] = await conn.query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
                 createdOrder.items = orderItemsRows || [];
-                // Soft status patch just in case
                 softStatusPatch(createdOrder);
             }
 
@@ -243,18 +257,10 @@ router.post('/', auth, async (req, res) => {
 /* ------------------------ list current user's orders ------------------------ */
 router.get('/', auth, async (req, res) => {
     try {
-        const [orders] = await pool.query(
-            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
-            [req.user.id]
-        );
-        if (orders.length === 0) {
-            return res.json([]);
-        }
+        const [orders] = await pool.query('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
+        if (orders.length === 0) return res.json([]);
         const orderIds = orders.map(o => o.id);
-        const [items] = await pool.query(
-            'SELECT * FROM order_items WHERE order_id IN (?)',
-            [orderIds]
-        );
+        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id IN (?)', [orderIds]);
         for (const order of orders) {
             order.items = items.filter(item => item.order_id === order.id);
             softStatusPatch(order);
@@ -270,18 +276,10 @@ router.get('/', auth, async (req, res) => {
 /* ---------------------------- get a single order --------------------------- */
 router.get('/:id', auth, async (req, res) => {
     try {
-        const [orders] = await pool.query(
-            'SELECT * FROM orders WHERE id = ? AND user_id = ?',
-            [req.params.id, req.user.id]
-        );
-        if (orders.length === 0) {
-            return res.status(404).json({ message: 'Order not found' });
-        }
+        const [orders] = await pool.query('SELECT * FROM orders WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+        if (orders.length === 0) return res.status(404).json({ message: 'Order not found' });
         const order = orders[0];
-        const [items] = await pool.query(
-            'SELECT * FROM order_items WHERE order_id = ?',
-            [req.params.id]
-        );
+        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [req.params.id]);
         order.items = items;
         softStatusPatch(order);
         setNoCache(res);
