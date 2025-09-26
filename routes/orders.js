@@ -57,9 +57,7 @@ router.post('/', auth, async (req, res) => {
             rental_duration,
             gift_email,
             shipping_speed,
-            phone,
-            save_phone_to_address,
-            new_address // optional: object with label, recipient, street, city, state, zip, phone
+            new_address // optional: object with label, recipient, street, city, state, zip
         } = req.body;
 
         // Basic validation
@@ -71,14 +69,6 @@ router.post('/', auth, async (req, res) => {
         }
         if (mode === 'gift' && !gift_email) {
             return res.status(400).json({ message: 'gift_email is required for gifts' });
-        }
-
-        // Validate phone (very light validation; adapt if you want stricter)
-        const normalizedPhone = (phone || '').toString().trim();
-        // Optionally check length/characters
-        if (!normalizedPhone) {
-            // require phone for orders (you can relax this if you prefer)
-            return res.status(400).json({ message: 'Phone number is required for order' });
         }
 
         const conn = await pool.getConnection();
@@ -181,7 +171,6 @@ router.post('/', auth, async (req, res) => {
                     mode === 'buy' ? (shipping_speed || 'standard') : null,
                     Number(shippingFee),
                     Number(codFee),
-                    normalizedPhone || null,
                     initialStatus,
                     deliveryEta
                 ]
@@ -194,20 +183,14 @@ router.post('/', auth, async (req, res) => {
                 await conn.query('INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)', [orderId, pi.book_id, pi.quantity, Number(pi.price)]);
             }
 
-            // ---------- Save phone to address if requested ----------
-            if (save_phone_to_address) {
-                if (shipping_address_id) {
-                    // ensure the address belongs to the user
-                    await conn.query('UPDATE addresses SET phone = ? WHERE id = ? AND user_id = ?', [normalizedPhone, shipping_address_id, req.user.id]);
-                } else if (new_address && typeof new_address === 'object') {
-                    // insert new address and attach phone
-                    const { label, recipient, street, city, state, zip } = new_address;
-                    if (label && recipient && street && city && state && zip) {
-                        const [resA] = await conn.query('INSERT INTO addresses (user_id, label, recipient, street, city, state, zip, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [req.user.id, label, recipient, street, city, state, zip, normalizedPhone]);
-                        const newAddrId = resA.insertId;
-                        // update the order to reference this address
-                        await conn.query('UPDATE orders SET shipping_address_id = ? WHERE id = ?', [newAddrId, orderId]);
-                    }
+            // Handle new address if provided
+            if (new_address && typeof new_address === 'object') {
+                const { label, recipient, street, city, state, zip } = new_address;
+                if (label && recipient && street && city && state && zip) {
+                    const [resA] = await conn.query('INSERT INTO addresses (user_id, label, recipient, street, city, state, zip) VALUES (?, ?, ?, ?, ?, ?, ?)', [req.user.id, label, recipient, street, city, state, zip]);
+                    const newAddrId = resA.insertId;
+                    // update the order to reference this address
+                    await conn.query('UPDATE orders SET shipping_address_id = ? WHERE id = ?', [newAddrId, orderId]);
                 }
             }
 

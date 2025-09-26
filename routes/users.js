@@ -182,9 +182,8 @@ router.put('/password', auth, async (req, res) => {
 // -----------------------------
 router.get('/addresses', auth, async (req, res) => {
     try {
-        // include phone in the SELECT so client receives it
         const [rows] = await pool.query(
-            'SELECT id, label, recipient, street, city, state, zip, phone FROM addresses WHERE user_id = ? ORDER BY id DESC',
+            'SELECT id, label, recipient, street, city, state, zip FROM addresses WHERE user_id = ? ORDER BY id DESC',
             [req.user.id]
         );
         res.json(rows);
@@ -196,20 +195,18 @@ router.get('/addresses', auth, async (req, res) => {
 
 router.post('/addresses', auth, async (req, res) => {
     try {
-        const { label, recipient, street, city, state, zip, phone } = req.body;
+        const { label, recipient, street, city, state, zip } = req.body;
 
-        // keep required fields mandatory, allow phone optional
         if (!label || !recipient || !street || !city || !state || !zip) {
-            return res.status(400).json({ message: 'All address fields are required (phone optional)' });
+            return res.status(400).json({ message: 'All address fields are required' });
         }
 
         const [result] = await pool.query(
-            'INSERT INTO addresses (user_id, label, recipient, street, city, state, zip, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [req.user.id, label, recipient, street, city, state, zip, phone || null]
+            'INSERT INTO addresses (user_id, label, recipient, street, city, state, zip) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [req.user.id, label, recipient, street, city, state, zip]
         );
 
-        // return the newly created row so client gets the saved phone and id
-        const [rows] = await pool.query('SELECT id, label, recipient, street, city, state, zip, phone FROM addresses WHERE id = ?', [result.insertId]);
+        const [rows] = await pool.query('SELECT id, label, recipient, street, city, state, zip FROM addresses WHERE id = ?', [result.insertId]);
         return res.status(201).json(rows[0] || { id: result.insertId, message: 'Address added successfully' });
     } catch (err) {
         console.error('Error adding address:', err);
