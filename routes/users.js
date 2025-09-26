@@ -60,9 +60,8 @@ router.get('/profile', auth, async (req, res) => {
         }
         const user = users[0];
 
-        // NOTE: include phone column here so address objects include phone
         const [addresses] = await pool.query(
-            'SELECT id, label, recipient, street, city, state, zip, phone FROM addresses WHERE user_id = ? ORDER BY id DESC',
+            'SELECT id, label, recipient, street, city, state, zip FROM addresses WHERE user_id = ?',
             [req.user.id]
         );
 
@@ -196,18 +195,14 @@ router.get('/addresses', auth, async (req, res) => {
 router.post('/addresses', auth, async (req, res) => {
     try {
         const { label, recipient, street, city, state, zip } = req.body;
-
         if (!label || !recipient || !street || !city || !state || !zip) {
             return res.status(400).json({ message: 'All address fields are required' });
         }
-
         const [result] = await pool.query(
             'INSERT INTO addresses (user_id, label, recipient, street, city, state, zip) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [req.user.id, label, recipient, street, city, state, zip]
         );
-
-        const [rows] = await pool.query('SELECT id, label, recipient, street, city, state, zip FROM addresses WHERE id = ?', [result.insertId]);
-        return res.status(201).json(rows[0] || { id: result.insertId, message: 'Address added successfully' });
+        return res.status(201).json({ id: result.insertId, message: 'Address added successfully' });
     } catch (err) {
         console.error('Error adding address:', err);
         return res.status(500).json({ message: 'Server error while adding address' });
