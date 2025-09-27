@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS users (
 	  claim_token VARCHAR(64) NOT NULL,
 	  recipient_user_id INT NULL,
 	  claimed_at DATETIME NULL,
+	  read_at DATETIME NULL,
 	  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	  UNIQUE KEY uq_gifts_token (claim_token),
 	  KEY idx_gifts_email (recipient_email),
@@ -180,3 +181,5 @@ ADD COLUMN shipping_fee DECIMAL(10, 2),
 ADD COLUMN cod_fee DECIMAL(10, 2);
 
 UPDATE users SET is_admin = 1 WHERE email = 'admin@gmail.com';
+
+ALTER TABLE gifts ADD COLUMN read_at DATETIME NULL AFTER claimed_at;
