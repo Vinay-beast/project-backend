@@ -2,12 +2,12 @@ const router = require('express').Router();
 const pool = require('../config/database');
 const auth = require('../middleware/auth');
 
-// Claim all unclaimed gifts sent to my email
+// Claim all unclaimed gifts sent to my email (now just marks as read)
 router.post('/claim', auth, async (req, res) => {
     try {
         const [r] = await pool.query(
             `UPDATE gifts
-         SET recipient_user_id = ?, claimed_at = NOW()
+         SET recipient_user_id = ?, read_at = NOW()
        WHERE recipient_email = ? AND recipient_user_id IS NULL`,
             [req.user.id, req.user.email]
         );
@@ -18,7 +18,7 @@ router.post('/claim', auth, async (req, res) => {
     }
 });
 
-// Claim a specific gift
+// Claim a specific gift (now just marks as read)
 router.post('/claim/:giftId', auth, async (req, res) => {
     try {
         const giftId = req.params.giftId;
@@ -34,7 +34,7 @@ router.post('/claim/:giftId', auth, async (req, res) => {
         }
 
         const [r] = await pool.query(
-            `UPDATE gifts SET recipient_user_id = ?, claimed_at = NOW() WHERE id = ? AND claimed_at IS NULL`,
+            `UPDATE gifts SET recipient_user_id = ?, read_at = NOW() WHERE id = ? AND read_at IS NULL`,
             [req.user.id, giftId]
         );
 
@@ -43,9 +43,7 @@ router.post('/claim/:giftId', auth, async (req, res) => {
         console.error('Individual gift claim failed:', err);
         return res.status(500).json({ message: 'Individual gift claim failed' });
     }
-});
-
-// Mark a gift as read
+});// Mark a gift as read
 router.post('/read/:giftId', auth, async (req, res) => {
     try {
         const giftId = req.params.giftId;

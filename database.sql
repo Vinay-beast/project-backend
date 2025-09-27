@@ -117,8 +117,7 @@ CREATE TABLE IF NOT EXISTS users (
 	  recipient_email VARCHAR(255) NOT NULL,
 	  claim_token VARCHAR(64) NOT NULL,
 	  recipient_user_id INT NULL,
-	  claimed_at DATETIME NULL,
-	  read_at DATETIME NULL,
+	  read_at DATETIME NULL, -- When gift is claimed/read (replaces claimed_at)
 	  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	  UNIQUE KEY uq_gifts_token (claim_token),
 	  KEY idx_gifts_email (recipient_email),
