@@ -178,3 +178,5 @@ ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0;
 ALTER TABLE orders
 ADD COLUMN shipping_fee DECIMAL(10, 2),
 ADD COLUMN cod_fee DECIMAL(10, 2);
+
+UPDATE users SET is_admin = 1 WHERE email = 'admin@gmail.com';
