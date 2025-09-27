@@ -7,15 +7,10 @@ router.get('/', auth, async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // Auto-claim any gifts matching my email (convenience)
-        await conn.query(
-            `UPDATE gifts
-          SET recipient_user_id = ?, claimed_at = NOW()
-        WHERE recipient_email = ? AND recipient_user_id IS NULL`,
-            [req.user.id, req.user.email]
-        );
+        // NOTE: Removed auto-claiming to allow manual gift claiming
+        // Users must manually claim gifts from the gifts section
 
-        // Owned via BUY
+        // Owned via BUY only (exclude gifts from owned section)
         const [ownedBuy] = await conn.query(
             `SELECT DISTINCT oi.book_id
          FROM orders o
@@ -24,14 +19,8 @@ router.get('/', auth, async (req, res) => {
             [req.user.id]
         );
 
-        // Owned via GIFTS (claimed or by email)
-        const [ownedGifts] = await conn.query(
-            `SELECT DISTINCT g.book_id
-         FROM gifts g
-        WHERE g.recipient_user_id = ?
-           OR g.recipient_email = ?`,
-            [req.user.id, req.user.email]
-        );
+        // NOTE: Gifts are handled separately in /api/gifts/mine route
+        // They should NOT appear in the owned section to maintain separation
 
         // Rented
         const [rented] = await conn.query(
@@ -42,8 +31,8 @@ router.get('/', auth, async (req, res) => {
             [req.user.id]
         );
 
-        // Hydrate book details
-        const ownedIds = [...new Set([...ownedBuy.map(x => x.book_id), ...ownedGifts.map(x => x.book_id)])];
+        // Hydrate book details for purchased books only
+        const ownedIds = [...new Set(ownedBuy.map(x => x.book_id))];
         let owned = [];
         if (ownedIds.length) {
             const [rows] = await conn.query(
