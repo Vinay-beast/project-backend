@@ -214,6 +214,34 @@ router.post('/', auth, async (req, res) => {
 
             await conn.commit();
 
+            // 🔔 SEND EMAIL NOTIFICATION via Azure Logic App
+            try {
+                const emailData = {
+                    customerEmail: req.user.email,
+                    customerName: req.user.name || 'Customer',
+                    orderTotal: total.toFixed(2),
+                    orderId: orderId.toString(),
+                    orderItems: processedItems.map(item => `Book ID: ${item.book_id} (Qty: ${item.quantity})`).join(', ')
+                };
+
+                // Replace YOUR_LOGIC_APP_URL with actual URL from Step 2.4
+                const logicAppUrl = process.env.AZURE_LOGIC_APP_URL || 'YOUR_LOGIC_APP_URL_HERE';
+
+                if (logicAppUrl !== 'YOUR_LOGIC_APP_URL_HERE') {
+                    await fetch(logicAppUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(emailData)
+                    });
+                    console.log('Order confirmation email sent via Azure Logic App');
+                }
+            } catch (emailError) {
+                console.error('Failed to send email notification:', emailError);
+                // Don't fail the order if email fails
+            }
+
             // Fetch the created order with items to return authoritative values to client
             const [ordersRows] = await conn.query('SELECT * FROM orders WHERE id = ?', [orderId]);
             const createdOrder = ordersRows[0] || null;
