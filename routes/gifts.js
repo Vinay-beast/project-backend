@@ -22,22 +22,22 @@ router.post('/claim', auth, async (req, res) => {
 router.post('/claim/:giftId', auth, async (req, res) => {
     try {
         const giftId = req.params.giftId;
-        
+
         // First check if this gift belongs to the user
         const [checkRows] = await pool.query(
             `SELECT id FROM gifts WHERE id = ? AND (recipient_user_id = ? OR recipient_email = ?)`,
             [giftId, req.user.id, req.user.email]
         );
-        
+
         if (checkRows.length === 0) {
             return res.status(404).json({ message: 'Gift not found or not authorized' });
         }
-        
+
         const [r] = await pool.query(
             `UPDATE gifts SET recipient_user_id = ?, claimed_at = NOW() WHERE id = ? AND claimed_at IS NULL`,
             [req.user.id, giftId]
         );
-        
+
         return res.json({ claimed: r.affectedRows || 0 });
     } catch (err) {
         console.error('Individual gift claim failed:', err);
@@ -49,13 +49,13 @@ router.post('/claim/:giftId', auth, async (req, res) => {
 router.post('/read/:giftId', auth, async (req, res) => {
     try {
         const giftId = req.params.giftId;
-        
+
         const [r] = await pool.query(
             `UPDATE gifts SET read_at = NOW() 
              WHERE id = ? AND (recipient_user_id = ? OR recipient_email = ?) AND read_at IS NULL`,
             [giftId, req.user.id, req.user.email]
         );
-        
+
         return res.json({ marked_read: r.affectedRows || 0 });
     } catch (err) {
         console.error('Mark gift as read failed:', err);
@@ -71,7 +71,7 @@ router.post('/read-all', auth, async (req, res) => {
              WHERE (recipient_user_id = ? OR recipient_email = ?) AND read_at IS NULL`,
             [req.user.id, req.user.email]
         );
-        
+
         return res.json({ marked_read: r.affectedRows || 0 });
     } catch (err) {
         console.error('Mark all gifts as read failed:', err);
