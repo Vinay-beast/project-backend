@@ -22,9 +22,11 @@ router.post('/claim', auth, async (req, res) => {
 router.get('/mine', auth, async (req, res) => {
     try {
         const [rows] = await pool.query(
-            `SELECT g.*, b.title, b.author, b.image_url
+            `SELECT g.*, b.title, b.author, b.image_url, u.name as sender_name, u.email as sender_email
          FROM gifts g
          JOIN books b ON b.id = g.book_id
+         JOIN orders o ON o.id = g.order_id
+         JOIN users u ON u.id = o.user_id
         WHERE g.recipient_user_id = ?
            OR g.recipient_email = ?
         ORDER BY g.created_at DESC`,
