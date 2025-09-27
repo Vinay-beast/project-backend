@@ -182,3 +182,4 @@ ADD COLUMN cod_fee DECIMAL(10, 2);
 UPDATE users SET is_admin = 1 WHERE email = 'admin@gmail.com';
 
 ALTER TABLE gifts ADD COLUMN read_at DATETIME NULL AFTER claimed_at;
+ALTER TABLE gifts DROP COLUMN claimed_at;

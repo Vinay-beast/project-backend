@@ -205,9 +205,9 @@ router.post('/', auth, async (req, res) => {
                 for (const item of items) {
                     const token = crypto.randomBytes(24).toString('hex');
                     await conn.query(
-                        `INSERT INTO gifts (order_id, book_id, quantity, recipient_email, claim_token, recipient_user_id, claimed_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [orderId, item.book_id, item.quantity, gift_email, token, recipientUserId, recipientUserId ? new Date() : null]
+                        `INSERT INTO gifts (order_id, book_id, quantity, recipient_email, claim_token, recipient_user_id)
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [orderId, item.book_id, item.quantity, gift_email, token, recipientUserId]
                     );
                 }
             }
