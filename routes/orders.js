@@ -335,27 +335,34 @@ router.post('/test-purchase/:bookId', auth, async (req, res) => {
         const book = books[0];
 
         // Check if user already has a completed order for this book
-        const [existing] = await pool.query(
-            'SELECT * FROM orders WHERE book_id = ? AND user_id = ? AND payment_status = "completed"',
-            [bookId, userId]
-        );
+        const [existing] = await pool.query(`
+            SELECT o.* FROM orders o 
+            JOIN order_items oi ON o.id = oi.order_id 
+            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = "completed"
+        `, [bookId, userId]);
 
         if (existing.length > 0) {
             return res.json({ message: 'You already own this book', orderId: existing[0].id });
         }
 
-        // Create a test purchase order
-        const [result] = await pool.query(
+        // Create a test purchase order with the correct schema
+        const [orderResult] = await pool.query(
             `INSERT INTO orders (
-                user_id, book_id, order_type, qty, amount, payment_status, 
-                payment_method, razorpay_order_id, created_at
-            ) VALUES (?, ?, 'purchase', 1, ?, 'completed', 'test', ?, NOW())`,
-            [userId, bookId, book.price, `test_${Date.now()}`]
+                user_id, mode, status, total, payment_method, payment_status, 
+                razorpay_order_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, 'buy', 'completed', book.price, 'test', 'completed', `test_${Date.now()}`]
+        );
+
+        // Create order item
+        const [itemResult] = await pool.query(
+            `INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)`,
+            [orderResult.insertId, bookId, 1, book.price]
         );
 
         res.json({
             message: 'Test purchase created successfully',
-            orderId: result.insertId,
+            orderId: orderResult.insertId,
             bookTitle: book.title
         });
 

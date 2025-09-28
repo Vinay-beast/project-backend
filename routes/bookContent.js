@@ -169,12 +169,13 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
         console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}`);
 
-        // Check if user has access to this book (purchased or rented)
+        // Check if user has access to this book (purchased or rented) - corrected query for proper schema
         const [orders] = await pool.query(`
-            SELECT o.*, b.title, b.content_url, b.content_type, b.page_count
+            SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
             FROM orders o
-            JOIN books b ON o.book_id = b.id
-            WHERE o.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
+            JOIN order_items oi ON o.id = oi.order_id
+            JOIN books b ON oi.book_id = b.id
+            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
             ORDER BY o.created_at DESC
             LIMIT 1
         `, [bookId, userId]);
@@ -186,7 +187,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 bookTitle: orders[0].title,
                 hasContentUrl: !!orders[0].content_url,
                 contentType: orders[0].content_type,
-                orderType: orders[0].order_type
+                mode: orders[0].mode,
+                rentalEnd: orders[0].rental_end
             });
         }
 
@@ -203,9 +205,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
         }
 
         // Check if it's a rental and if it's still valid
-        if (order.order_type === 'rental') {
+        if (order.mode === 'rent') {
             const now = new Date();
-            const expiryDate = new Date(order.rental_expires_at);
+            const expiryDate = new Date(order.rental_end);
 
             if (now > expiryDate) {
                 return res.status(403).json({ message: 'Your rental period has expired' });
@@ -218,7 +220,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 title: order.title,
                 pageCount: order.page_count,
                 accessType: 'rental',
-                expiresAt: order.rental_expires_at
+                expiresAt: order.rental_end
             });
         } else {
             // For purchased books, provide direct access (container is now public)
