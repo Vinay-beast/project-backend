@@ -320,4 +320,49 @@ router.get('/:id', auth, async (req, res) => {
     }
 });
 
+// Test endpoint to create a completed order for book reading testing
+router.post('/test-purchase/:bookId', auth, async (req, res) => {
+    try {
+        const { bookId } = req.params;
+        const userId = req.user.id;
+
+        // Check if book exists
+        const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+        if (books.length === 0) {
+            return res.status(404).json({ message: 'Book not found' });
+        }
+
+        const book = books[0];
+
+        // Check if user already has a completed order for this book
+        const [existing] = await pool.query(
+            'SELECT * FROM orders WHERE book_id = ? AND user_id = ? AND payment_status = "completed"',
+            [bookId, userId]
+        );
+
+        if (existing.length > 0) {
+            return res.json({ message: 'You already own this book', orderId: existing[0].id });
+        }
+
+        // Create a test purchase order
+        const [result] = await pool.query(
+            `INSERT INTO orders (
+                user_id, book_id, order_type, qty, amount, payment_status, 
+                payment_method, razorpay_order_id, created_at
+            ) VALUES (?, ?, 'purchase', 1, ?, 'completed', 'test', ?, NOW())`,
+            [userId, bookId, book.price, `test_${Date.now()}`]
+        );
+
+        res.json({ 
+            message: 'Test purchase created successfully', 
+            orderId: result.insertId,
+            bookTitle: book.title 
+        });
+
+    } catch (error) {
+        console.error('Error creating test purchase:', error);
+        res.status(500).json({ message: 'Failed to create test purchase' });
+    }
+});
+
 module.exports = router;
