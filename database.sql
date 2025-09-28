@@ -213,4 +213,8 @@ ADD COLUMN razorpay_signature VARCHAR(200) AFTER razorpay_payment_id;
 ALTER TABLE orders 
 
 ADD COLUMN updated_at DATETIME DEFAULT NULL AFTER razorpay_signature;
--- ===============================================
+-- ===============================================-- Add book content and sample storage columns
+ALTER TABLE books ADD COLUMN content_url VARCHAR(512) NULL COMMENT 'Azure Blob Storage URL for book content';
+ALTER TABLE books ADD COLUMN sample_url VARCHAR(512) NULL COMMENT 'Azure Blob Storage URL for book sample/preview';
+ALTER TABLE books ADD COLUMN content_type ENUM('pdf', 'epub', 'txt', 'html') DEFAULT 'pdf' COMMENT 'Type of book content';
+ALTER TABLE books ADD COLUMN page_count INT DEFAULT 0 COMMENT 'Number of pages in the book';

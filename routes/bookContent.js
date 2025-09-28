@@ -5,7 +5,7 @@ const adminAuth = require('../middleware/admin');
 const pool = require('../config/database');
 const azureStorageService = require('../config/azureStorage');
 
-// Multer for book content upload (PDF, EPUB, etc.)
+// Multer for book content upload (PDF, EPUB, etc.) and cover images
 const upload = multer({
     storage: multer.memoryStorage(),
     fileFilter: (req, file, cb) => {
@@ -13,10 +13,14 @@ const upload = multer({
             'application/pdf',
             'application/epub+zip',
             'text/plain',
-            'text/html'
+            'text/html',
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/gif'
         ];
         const ok = allowedTypes.includes(file.mimetype);
-        cb(ok ? null : new Error('Only PDF, EPUB, TXT, and HTML files are allowed'), ok);
+        cb(ok ? null : new Error('Only PDF, EPUB, TXT, HTML, and image files are allowed'), ok);
     },
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB for book files
 });
@@ -67,6 +71,47 @@ router.post('/:bookId/content', auth, adminAuth, upload.single('content'), async
     } catch (error) {
         console.error('Error uploading book content:', error);
         res.status(500).json({ message: 'Failed to upload book content' });
+    }
+});
+
+// Upload book cover (Admin only)
+router.post('/:bookId/cover', auth, adminAuth, upload.single('cover'), async (req, res) => {
+    try {
+        const { bookId } = req.params;
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Cover image file is required' });
+        }
+
+        // Check if book exists
+        const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+        if (books.length === 0) {
+            return res.status(404).json({ message: 'Book not found' });
+        }
+
+        // Upload to Azure Blob Storage (public container for covers)
+        const filename = `book_${bookId}_cover.${req.file.originalname.split('.').pop()}`;
+        const coverUrl = await azureStorageService.uploadBookCover(
+            req.file.buffer,
+            filename,
+            req.file.mimetype
+        );
+
+        // Update book with cover URL
+        await pool.query(
+            'UPDATE books SET image_url = ?, cover = ? WHERE id = ?',
+            [coverUrl, coverUrl, bookId]
+        );
+
+        res.json({
+            message: 'Book cover uploaded successfully',
+            coverUrl,
+            url: coverUrl // For compatibility
+        });
+
+    } catch (error) {
+        console.error('Error uploading book cover:', error);
+        res.status(500).json({ message: 'Failed to upload book cover' });
     }
 });
 
