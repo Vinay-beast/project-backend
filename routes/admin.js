@@ -56,22 +56,16 @@ router.get('/users', async (req, res) => {
         );
 
         const ids = users.map(u => u.id);
-        let addrRows = [], cardRows = [];
+        let addrRows = [];
         if (ids.length) {
             const [a] = await pool.query(
                 `SELECT user_id, COUNT(*) as cnt FROM addresses WHERE user_id IN (${ids.map(() => '?').join(',')}) GROUP BY user_id`,
                 ids
             );
             addrRows = a;
-            const [c] = await pool.query(
-                `SELECT user_id, COUNT(*) as cnt FROM payment_cards WHERE user_id IN (${ids.map(() => '?').join(',')}) GROUP BY user_id`,
-                ids
-            );
-            cardRows = c;
         }
 
         const addrBy = new Map(addrRows.map(r => [r.user_id, r.cnt]));
-        const cardBy = new Map(cardRows.map(r => [r.user_id, r.cnt]));
 
         const out = users.map(u => ({
             id: u.id,
@@ -82,7 +76,6 @@ router.get('/users', async (req, res) => {
             is_admin: !!u.is_admin,
             profile_pic: u.profile_pic,
             addresses_count: addrBy.get(u.id) || 0,
-            cards_count: cardBy.get(u.id) || 0,
             created_at: u.created_at
         }));
 

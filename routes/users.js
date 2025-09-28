@@ -60,20 +60,14 @@ router.get('/profile', auth, async (req, res) => {
         }
         const user = users[0];
 
+        // Add addresses
         const [addresses] = await pool.query(
-            'SELECT id, label, recipient, street, city, state, zip FROM addresses WHERE user_id = ?',
+            'SELECT id, recipient, street, city, state, zip, label FROM addresses WHERE user_id = ?',
             [req.user.id]
         );
-
-        const [cards] = await pool.query(
-            'SELECT id, card_name, CONCAT("**** **** **** ", RIGHT(card_number, 4)) AS card_number, expiry, is_default FROM payment_cards WHERE user_id = ?',
-            [req.user.id]
-        );
-
         user.addresses = addresses;
-        user.cards = cards;
 
-        return res.json(user);
+        res.json(user);
     } catch (err) {
         console.error('Error fetching profile:', err);
         return res.status(500).json({ message: 'Server error while fetching profile' });
@@ -206,53 +200,6 @@ router.post('/addresses', auth, async (req, res) => {
     } catch (err) {
         console.error('Error adding address:', err);
         return res.status(500).json({ message: 'Server error while adding address' });
-    }
-});
-
-// -----------------------------
-// Cards (masked storage; never store CVV)
-// -----------------------------
-router.get('/cards', auth, async (req, res) => {
-    try {
-        const [rows] = await pool.query(
-            'SELECT id, card_name, CONCAT("**** **** **** ", RIGHT(card_number, 4)) AS card_number, expiry, is_default FROM payment_cards WHERE user_id = ? ORDER BY is_default DESC, id DESC',
-            [req.user.id]
-        );
-        res.json(rows);
-    } catch (err) {
-        console.error('Error listing cards:', err);
-        res.status(500).json({ message: 'Server error while fetching cards' });
-    }
-});
-
-router.post('/cards', auth, async (req, res) => {
-    try {
-        const { card_name, card_number, expiry, cvv, is_default } = req.body;
-
-        if (!card_name || !card_number || !expiry || !cvv) {
-            return res.status(400).json({ message: 'All card fields are required' });
-        }
-        if (String(cvv).length < 3 || String(cvv).length > 4) {
-            return res.status(400).json({ message: 'Invalid CVV' });
-        }
-
-        // Mask number before saving (only last 4)
-        const maskedCard = String(card_number).replace(/\d(?=\d{4})/g, '*');
-
-        // ensure single default
-        if (is_default) {
-            await pool.query('UPDATE payment_cards SET is_default = 0 WHERE user_id = ?', [req.user.id]);
-        }
-
-        const [result] = await pool.query(
-            'INSERT INTO payment_cards (user_id, card_name, card_number, expiry, is_default) VALUES (?, ?, ?, ?, ?)',
-            [req.user.id, card_name, maskedCard, expiry, is_default ? 1 : 0]
-        );
-
-        return res.status(201).json({ id: result.insertId, message: 'Card added successfully (masked)' });
-    } catch (err) {
-        console.error('Error adding card:', err);
-        return res.status(500).json({ message: 'Server error while adding card' });
     }
 });
 

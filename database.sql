@@ -196,3 +196,21 @@ ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(100);
 ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(100);
 ALTER TABLE orders ADD COLUMN razorpay_signature VARCHAR(200);
 ALTER TABLE orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+
+-- Add Razorpay payment tracking columns to orders table
+ALTER TABLE orders 
+ADD COLUMN payment_status ENUM('pending', 'completed', 'failed', 'captured') DEFAULT 'pending' AFTER payment_method;
+
+ALTER TABLE orders 
+ADD COLUMN razorpay_order_id VARCHAR(100) AFTER payment_status;
+
+ALTER TABLE orders 
+ADD COLUMN razorpay_payment_id VARCHAR(100) AFTER razorpay_order_id;
+
+ALTER TABLE orders 
+ADD COLUMN razorpay_signature VARCHAR(200) AFTER razorpay_payment_id;
+
+ALTER TABLE orders 
+
+ADD COLUMN updated_at DATETIME DEFAULT NULL AFTER razorpay_signature;
+-- ===============================================
