@@ -10,7 +10,7 @@ router.get('/pdf/:bookId', async (req, res) => {
     try {
         const { bookId } = req.params;
         const token = req.query.token || req.headers.authorization?.split(' ')[1] || req.headers['x-auth-token'];
-        
+
         if (!token) {
             return res.status(401).json({ message: 'Authentication required' });
         }
@@ -41,11 +41,15 @@ router.get('/pdf/:bookId', async (req, res) => {
             LIMIT 1
         `, [bookId, userId]);
 
+        console.log(`Secure PDF access requested: bookId=${bookId}, userId=${userId}`);
+        console.log(`Found ${orders.length} matching orders`);
+
         if (orders.length === 0) {
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 
         const order = orders[0];
+        console.log(`Order details: content_url=${order.content_url ? 'exists' : 'missing'}, mode=${order.mode}`);
 
         // Check rental expiry
         if (order.mode === 'rent' && order.rental_end) {
@@ -57,13 +61,63 @@ router.get('/pdf/:bookId', async (req, res) => {
         }
 
         if (!order.content_url) {
-            return res.status(404).json({ message: 'Book content not available' });
+            console.log(`No content URL found for book ${bookId}`);
+            // For testing, return a simple PDF message instead of error
+            const pdfContent = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 100 >>
+stream
+BT
+/F1 24 Tf
+100 700 Td
+(Book content not uploaded yet) Tj
+50 650 Td
+(Please upload PDF via admin panel) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000010 00000 n 
+0000000053 00000 n 
+0000000110 00000 n 
+0000000244 00000 n 
+0000000394 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+464
+%%EOF`;
+            
+            res.set({
+                'Content-Type': 'application/pdf',
+                'Content-Disposition': 'inline; filename="no-content.pdf"',
+                'Cache-Control': 'no-store'
+            });
+            return res.send(Buffer.from(pdfContent));
         }
 
+        console.log(`Fetching PDF from: ${order.content_url}`);
         // Fetch the PDF from Azure
         const response = await fetch(order.content_url);
+        console.log(`Azure response status: ${response.status} ${response.statusText}`);
+        
         if (!response.ok) {
-            return res.status(404).json({ message: 'Book content not found' });
+            console.log(`Failed to fetch PDF from Azure: ${response.status} ${response.statusText}`);
+            return res.status(404).json({ message: 'Book content not found on server' });
         }
 
         // Set headers to prevent download and caching
@@ -78,12 +132,20 @@ router.get('/pdf/:bookId', async (req, res) => {
             'X-Content-Type-Options': 'nosniff'
         });
 
-        // Stream the PDF
-        response.body.pipe(res);
+        // Stream the PDF with error handling
+        console.log('Starting PDF stream...');
+        response.body.pipe(res).on('error', (err) => {
+            console.error('PDF stream error:', err);
+            if (!res.headersSent) {
+                res.status(500).json({ message: 'Error streaming book content' });
+            }
+        });
 
     } catch (error) {
         console.error('Error serving secure PDF:', error);
-        res.status(500).json({ message: 'Failed to load book content' });
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Failed to load book content' });
+        }
     }
 });
 
