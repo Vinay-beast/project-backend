@@ -160,14 +160,14 @@ class AzureStorageService {
     }
 
     /**
-     * Upload book content (private)
+     * Upload book content (public - simplified access)
      * @param {Buffer} fileBuffer - File buffer
      * @param {string} fileName - Original filename
      * @param {string} mimeType - MIME type
      * @returns {Promise<string>} - Returns blob URL
      */
     async uploadBookContent(fileBuffer, fileName, mimeType) {
-        return this.uploadFile(this.containers.bookContent, fileBuffer, fileName, mimeType, { isPublic: false });
+        return this.uploadFile(this.containers.bookContent, fileBuffer, fileName, mimeType, { isPublic: true });
     }
 
     /**

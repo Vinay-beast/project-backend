@@ -211,11 +211,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 return res.status(403).json({ message: 'Your rental period has expired' });
             }
 
-            // For rentals, generate a temporary SAS URL (1 hour expiry)
-            const temporaryUrl = await azureStorageService.generateSasUrl(order.content_url, 1);
-
+            // For rentals, provide direct access (container is now public)
             return res.json({
-                readingUrl: temporaryUrl,
+                readingUrl: order.content_url,
                 contentType: order.content_type,
                 title: order.title,
                 pageCount: order.page_count,
@@ -223,19 +221,15 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 expiresAt: order.rental_expires_at
             });
         } else {
-            // For purchased books, generate a longer-lived SAS URL (24 hours)
-            const accessUrl = await azureStorageService.generateSasUrl(order.content_url, 24);
-
+            // For purchased books, provide direct access (container is now public)
             return res.json({
-                readingUrl: accessUrl,
+                readingUrl: order.content_url,
                 contentType: order.content_type,
                 title: order.title,
                 pageCount: order.page_count,
                 accessType: 'purchase'
             });
-        }
-
-    } catch (error) {
+        }    } catch (error) {
         console.error('Error getting book reading access:', error);
         res.status(500).json({ message: 'Failed to get book access' });
     }
