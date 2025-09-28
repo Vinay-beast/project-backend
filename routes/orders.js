@@ -353,10 +353,10 @@ router.post('/test-purchase/:bookId', auth, async (req, res) => {
             [userId, bookId, book.price, `test_${Date.now()}`]
         );
 
-        res.json({ 
-            message: 'Test purchase created successfully', 
+        res.json({
+            message: 'Test purchase created successfully',
             orderId: result.insertId,
-            bookTitle: book.title 
+            bookTitle: book.title
         });
 
     } catch (error) {
