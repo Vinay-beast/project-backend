@@ -150,6 +150,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/books', require('./routes/books'));
 app.use('/api/book-content', require('./routes/bookContent'));
 app.use('/api/secure-reader', require('./routes/secureReader'));
+app.use('/api/debug', require('./routes/debug'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/gifts', require('./routes/gifts'));
