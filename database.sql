@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS users (
 		gift_email VARCHAR(255),
 		shipping_speed VARCHAR(50),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		-- Razorpay Integration Fields
+		payment_status ENUM('pending', 'completed', 'failed', 'captured') DEFAULT 'pending',
+		razorpay_order_id VARCHAR(100),
+		razorpay_payment_id VARCHAR(100),
+		razorpay_signature VARCHAR(200),
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		CONSTRAINT fk_orders_user FOREIGN KEY (user_id)
 			REFERENCES users(id)
 			ON DELETE CASCADE ON UPDATE CASCADE,
@@ -183,3 +189,10 @@ UPDATE users SET is_admin = 1 WHERE email = 'admin@gmail.com';
 
 ALTER TABLE gifts ADD COLUMN read_at DATETIME NULL AFTER claimed_at;
 ALTER TABLE gifts DROP COLUMN claimed_at;
+
+-- Add Razorpay payment tracking columns to orders table
+ALTER TABLE orders ADD COLUMN payment_status ENUM('pending', 'completed', 'failed', 'captured') DEFAULT 'pending';
+ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(100);
+ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(100);
+ALTER TABLE orders ADD COLUMN razorpay_signature VARCHAR(200);
+ALTER TABLE orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
