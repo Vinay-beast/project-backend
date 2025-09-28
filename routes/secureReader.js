@@ -101,7 +101,7 @@ trailer
 startxref
 464
 %%EOF`;
-            
+
             res.set({
                 'Content-Type': 'application/pdf',
                 'Content-Disposition': 'inline; filename="no-content.pdf"',
@@ -114,7 +114,7 @@ startxref
         // Fetch the PDF from Azure
         const response = await fetch(order.content_url);
         console.log(`Azure response status: ${response.status} ${response.statusText}`);
-        
+
         if (!response.ok) {
             console.log(`Failed to fetch PDF from Azure: ${response.status} ${response.statusText}`);
             return res.status(404).json({ message: 'Book content not found on server' });
