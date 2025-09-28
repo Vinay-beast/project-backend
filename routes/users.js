@@ -15,7 +15,7 @@ const upload = multer({
         const ok = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.mimetype);
         cb(ok ? null : new Error('Only image files are allowed'), ok);
     },
-    limits: { fileSize: 2 * 1024 * 1024 } // 2MB
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB (increased from 2MB)
 });
 
 // Helper: save base64 data URL to Azure Blob Storage
