@@ -142,14 +142,14 @@ router.get('/:bookId/read', auth, async (req, res) => {
         if (order.order_type === 'rental') {
             const now = new Date();
             const expiryDate = new Date(order.rental_expires_at);
-            
+
             if (now > expiryDate) {
                 return res.status(403).json({ message: 'Your rental period has expired' });
             }
 
             // For rentals, generate a temporary SAS URL (1 hour expiry)
             const temporaryUrl = await azureStorageService.generateSasUrl(order.content_url, 1);
-            
+
             return res.json({
                 readingUrl: temporaryUrl,
                 contentType: order.content_type,
