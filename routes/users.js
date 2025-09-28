@@ -1,29 +1,16 @@
 const router = require('express').Router();
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 
 const auth = require('../middleware/auth');
 const pool = require('../config/database');
+const azureStorageService = require('../config/azureStorage');
 
 // -----------------------------
-// Multer (for file uploads)
+// Multer (for memory storage - Azure upload)
 // -----------------------------
-const uploadDir = path.join(__dirname, '..', 'uploads', 'profiles');
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-        const ext = (file.mimetype && file.mimetype.split('/')[1]) || 'png';
-        const safe = `${req.user?.id || 'u'}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-        cb(null, safe);
-    }
-});
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     fileFilter: (req, file, cb) => {
         const ok = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.mimetype);
         cb(ok ? null : new Error('Only image files are allowed'), ok);
@@ -31,19 +18,25 @@ const upload = multer({
     limits: { fileSize: 2 * 1024 * 1024 } // 2MB
 });
 
-// Helper: save base64 data URL to file and return public URL
-function saveDataUrlToFile(dataUrl, userId) {
-    // data:image/png;base64,xxxx
-    const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl || '');
-    if (!m) return null;
-    const mime = m[1];
-    const buf = Buffer.from(m[2], 'base64');
-    const ext = mime.split('/')[1] || 'png';
-    const filename = `${userId || 'u'}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    const full = path.join(uploadDir, filename);
-    fs.writeFileSync(full, buf);
-    // public URL path that server.js serves: /uploads
-    return `/uploads/profiles/${filename}`;
+// Helper: save base64 data URL to Azure Blob Storage
+async function saveDataUrlToAzure(dataUrl, userId) {
+    try {
+        // data:image/png;base64,xxxx
+        const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl || '');
+        if (!m) return null;
+
+        const mimeType = m[1];
+        const buffer = Buffer.from(m[2], 'base64');
+        const ext = mimeType.split('/')[1] || 'png';
+        const filename = `user_${userId}_${Date.now()}.${ext}`;
+
+        // Upload to Azure Blob Storage
+        const blobUrl = await azureStorageService.uploadProfilePicture(buffer, filename, mimeType);
+        return blobUrl;
+    } catch (error) {
+        console.error('Error saving base64 image to Azure:', error);
+        throw error;
+    }
 }
 
 // -----------------------------
@@ -90,18 +83,39 @@ router.put('/profile', auth, upload.single('profile_pic'), async (req, res) => {
         }
 
         let finalPicUrl = null;
+        let oldProfilePic = null;
+
+        // Get current profile pic for potential cleanup
+        try {
+            const [currentUser] = await pool.query('SELECT profile_pic FROM users WHERE id = ?', [req.user.id]);
+            if (currentUser.length > 0 && currentUser[0].profile_pic) {
+                oldProfilePic = currentUser[0].profile_pic;
+            }
+        } catch (error) {
+            console.error('Error fetching current profile pic:', error);
+        }
 
         // Priority 1: file upload via multipart
         if (req.file) {
-            finalPicUrl = `/uploads/profiles/${req.file.filename}`;
+            try {
+                const filename = `user_${req.user.id}_${Date.now()}.${req.file.originalname.split('.').pop()}`;
+                finalPicUrl = await azureStorageService.uploadProfilePicture(
+                    req.file.buffer,
+                    filename,
+                    req.file.mimetype
+                );
+            } catch (error) {
+                console.error('Failed to upload file to Azure:', error);
+                return res.status(500).json({ message: 'Failed to upload profile picture' });
+            }
         }
-        // Priority 2: base64 data URL → store to file
+        // Priority 2: base64 data URL → store to Azure
         else if (profile_pic && /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(profile_pic)) {
             try {
-                finalPicUrl = saveDataUrlToFile(profile_pic, req.user.id);
+                finalPicUrl = await saveDataUrlToAzure(profile_pic, req.user.id);
             } catch (e) {
-                console.error('Failed to save base64 image:', e);
-                return res.status(400).json({ message: 'Invalid image data' });
+                console.error('Failed to save base64 image to Azure:', e);
+                return res.status(400).json({ message: 'Invalid image data or upload failed' });
             }
         }
         // Priority 3: plain URL (keep as-is) or empty
@@ -127,6 +141,17 @@ router.put('/profile', auth, upload.single('profile_pic'), async (req, res) => {
             `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
             values
         );
+
+        // Clean up old Azure blob if we uploaded a new one
+        if (finalPicUrl && oldProfilePic && oldProfilePic !== finalPicUrl && oldProfilePic.includes('blob.core.windows.net')) {
+            try {
+                await azureStorageService.deleteFile(oldProfilePic);
+                console.log('Old profile picture deleted from Azure:', oldProfilePic);
+            } catch (error) {
+                console.error('Failed to delete old profile picture from Azure:', error);
+                // Don't fail the request if cleanup fails
+            }
+        }
 
         // Respond with updated profile summary
         const [rows] = await pool.query(
