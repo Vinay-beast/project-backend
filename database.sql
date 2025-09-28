@@ -218,3 +218,70 @@ ALTER TABLE books ADD COLUMN content_url VARCHAR(512) NULL COMMENT 'Azure Blob S
 ALTER TABLE books ADD COLUMN sample_url VARCHAR(512) NULL COMMENT 'Azure Blob Storage URL for book sample/preview';
 ALTER TABLE books ADD COLUMN content_type ENUM('pdf', 'epub', 'txt', 'html') DEFAULT 'pdf' COMMENT 'Type of book content';
 ALTER TABLE books ADD COLUMN page_count INT DEFAULT 0 COMMENT 'Number of pages in the book';
+
+
+
+-- Fixed version to avoid TIMESTAMP limitations
+
+-- 1. Reading Sessions Table
+CREATE TABLE IF NOT EXISTS reading_sessions (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    book_id VARCHAR(50) NOT NULL,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP NULL,
+    pages_read INT DEFAULT 0,
+    duration_minutes INT DEFAULT 0,
+    session_type ENUM('purchase', 'rental', 'sample') DEFAULT 'purchase',
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_user_book (user_id, book_id),
+    INDEX idx_started_at (started_at)
+);
+
+-- 2. User Reading Stats Summary (for quick access)
+CREATE TABLE IF NOT EXISTS user_reading_stats (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT UNIQUE NOT NULL,
+    total_books_read INT DEFAULT 0,
+    total_reading_minutes INT DEFAULT 0,
+    total_pages_read INT DEFAULT 0,
+    favorite_genre VARCHAR(100) NULL,
+    last_reading_session TIMESTAMP NULL,
+    books_completed INT DEFAULT 0,
+    current_streak_days INT DEFAULT 0,
+    longest_streak_days INT DEFAULT 0,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 3. Book Completion Tracking
+CREATE TABLE IF NOT EXISTS book_completions (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    book_id VARCHAR(50) NOT NULL,
+    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_reading_time_minutes INT DEFAULT 0,
+    rating INT NULL,
+    created_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_book (user_id, book_id),
+    INDEX idx_completed_at (completed_at)
+);
+
+-- 4. Daily Reading Activity (for streak calculation)
+CREATE TABLE IF NOT EXISTS daily_reading_activity (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    reading_date DATE NOT NULL,
+    pages_read_today INT DEFAULT 0,
+    minutes_read_today INT DEFAULT 0,
+    books_accessed_today INT DEFAULT 0,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_date (user_id, reading_date),
+    INDEX idx_reading_date (reading_date)
+);
