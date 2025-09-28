@@ -229,7 +229,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 pageCount: order.page_count,
                 accessType: 'purchase'
             });
-        }    } catch (error) {
+        }
+    } catch (error) {
         console.error('Error getting book reading access:', error);
         res.status(500).json({ message: 'Failed to get book access' });
     }
