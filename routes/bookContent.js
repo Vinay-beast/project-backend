@@ -167,6 +167,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
         const { bookId } = req.params;
         const userId = req.user.id;
 
+        console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}`);
+
         // Check if user has access to this book (purchased or rented)
         const [orders] = await pool.query(`
             SELECT o.*, b.title, b.content_url, b.content_type, b.page_count
@@ -177,11 +179,28 @@ router.get('/:bookId/read', auth, async (req, res) => {
             LIMIT 1
         `, [bookId, userId]);
 
+        console.log(`Orders found: ${orders.length}`);
+        if (orders.length > 0) {
+            console.log(`Order details:`, {
+                orderId: orders[0].id,
+                bookTitle: orders[0].title,
+                hasContentUrl: !!orders[0].content_url,
+                contentType: orders[0].content_type,
+                orderType: orders[0].order_type
+            });
+        }
+
         if (orders.length === 0) {
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 
         const order = orders[0];
+
+        // Ensure book has content URL
+        if (!order.content_url) {
+            console.log(`Book ${bookId} has no content URL`);
+            return res.status(404).json({ message: 'Book content not available. Content has not been uploaded yet.' });
+        }
 
         // Check if it's a rental and if it's still valid
         if (order.order_type === 'rental') {
@@ -204,9 +223,11 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 expiresAt: order.rental_expires_at
             });
         } else {
-            // For purchased books, provide direct access
+            // For purchased books, generate a longer-lived SAS URL (24 hours)
+            const accessUrl = await azureStorageService.generateSasUrl(order.content_url, 24);
+
             return res.json({
-                readingUrl: order.content_url,
+                readingUrl: accessUrl,
                 contentType: order.content_type,
                 title: order.title,
                 pageCount: order.page_count,

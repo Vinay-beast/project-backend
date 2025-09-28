@@ -1,4 +1,4 @@
-const { BlobServiceClient, StorageSharedKeyCredential } = require('@azure/storage-blob');
+const { BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters, BlobSASPermissions, SASProtocol } = require('@azure/storage-blob');
 const { v4: uuidv4 } = require('uuid');
 
 class AzureStorageService {
@@ -97,14 +97,43 @@ class AzureStorageService {
      */
     async generateSasUrl(blobUrl, expiryHours = 1) {
         try {
-            // This is a placeholder for SAS URL generation
-            // In production, implement proper SAS token generation
-            // For now, return the original URL (only for development)
-            console.log('SAS URL generation - Development mode');
-            return blobUrl;
+            const { generateBlobSASQueryParameters, BlobSASPermissions, SASProtocol } = require('@azure/storage-blob');
+
+            // Extract container name and blob name from URL
+            const url = new URL(blobUrl);
+            const pathParts = url.pathname.split('/').filter(part => part);
+            const containerName = pathParts[0];
+            const blobName = pathParts.slice(1).join('/');
+
+            // Get container client and blob client
+            const containerClient = this.blobServiceClient.getContainerClient(containerName);
+            const blobClient = containerClient.getBlobClient(blobName);
+
+            // Check if we have the required credentials for SAS generation
+            if (!this.accountKey) {
+                console.warn('Azure Storage Account Key not available, returning original URL (development mode)');
+                return blobUrl;
+            }
+
+            // Create SAS token
+            const sasOptions = {
+                containerName,
+                blobName,
+                permissions: BlobSASPermissions.parse('r'), // Read permission only
+                startsOn: new Date(),
+                expiresOn: new Date(new Date().getTime() + expiryHours * 60 * 60 * 1000), // Hours from now
+                protocol: SASProtocol.Https,
+            };
+
+            const credential = new StorageSharedKeyCredential(this.accountName, this.accountKey);
+            const sasToken = generateBlobSASQueryParameters(sasOptions, credential).toString();
+
+            // Return blob URL with SAS token
+            return `${blobClient.url}?${sasToken}`;
         } catch (error) {
             console.error('Error generating SAS URL:', error);
-            throw error;
+            // Fallback to original URL in case of error (for development)
+            return blobUrl;
         }
     }
 
