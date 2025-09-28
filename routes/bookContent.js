@@ -213,9 +213,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 return res.status(403).json({ message: 'Your rental period has expired' });
             }
 
-            // For rentals, provide proxied URL through our secure reader endpoint
+            // For rentals, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: `/api/secure-reader/${bookId}?token=${req.headers.authorization?.replace('Bearer ', '')}`,
+                readingUrl: order.content_url,
                 contentType: order.content_type,
                 title: order.title,
                 pageCount: order.page_count,
@@ -223,9 +223,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 expiresAt: order.rental_end
             });
         } else {
-            // For purchased books, provide proxied URL through our secure reader endpoint
+            // For purchased books, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: `/api/secure-reader/${bookId}?token=${req.headers.authorization?.replace('Bearer ', '')}`,
+                readingUrl: order.content_url,
                 contentType: order.content_type,
                 title: order.title,
                 pageCount: order.page_count,
