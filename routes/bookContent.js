@@ -161,16 +161,51 @@ router.post('/:bookId/sample', auth, adminAuth, upload.single('sample'), async (
     }
 });
 
+// Debug endpoint to check gifts for a user
+router.get('/debug/gifts', auth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+        
+        const [gifts] = await pool.query(`
+            SELECT g.*, b.title, b.id as book_id
+            FROM gifts g
+            JOIN books b ON g.book_id = b.id
+            WHERE g.recipient_user_id = ? OR g.recipient_email = ?
+            ORDER BY g.created_at DESC
+        `, [userId, userEmail]);
+
+        res.json({
+            userId,
+            userEmail,
+            totalGifts: gifts.length,
+            gifts: gifts.map(g => ({
+                giftId: g.id,
+                bookId: g.book_id,
+                bookTitle: g.title,
+                recipientEmail: g.recipient_email,
+                recipientUserId: g.recipient_user_id,
+                readAt: g.read_at,
+                createdAt: g.created_at
+            }))
+        });
+    } catch (error) {
+        console.error('Debug gifts error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get secure book content URL for reading (Based on purchase/rental)
 router.get('/:bookId/read', auth, async (req, res) => {
     try {
         const { bookId } = req.params;
         const userId = req.user.id;
 
-        console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}`);
+        console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}, userEmail=${req.user.email}`);
 
         // Check if user has access to this book (purchased, rented, or received as gift)
         // First check for direct orders (purchase/rental)
+        console.log(`Checking direct orders for user ${userId}, book ${bookId}`);
         const [orders] = await pool.query(`
             SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end, 'order' as access_source
             FROM orders o
@@ -181,67 +216,63 @@ router.get('/:bookId/read', auth, async (req, res) => {
             LIMIT 1
         `, [bookId, userId]);
 
+        console.log(`Direct orders found: ${orders.length}`);
+
         // If no direct order found, check for gifts
         let bookAccess = null;
         if (orders.length > 0) {
             bookAccess = orders[0];
             console.log(`Found direct order access for user ${userId}, book ${bookId}`);
         } else {
-            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookId}`);
+            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookId}, email ${req.user.email}`);
 
-            // Check for gifts - user can access if they're the recipient and gift is claimed
-            // OR if the gift was sent to their email (auto-claim)
+            // Check for gifts - user can access if they're the recipient
             const [gifts] = await pool.query(`
                 SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
                 FROM gifts g
                 JOIN books b ON g.book_id = b.id
                 WHERE g.book_id = ? 
-                AND (
-                    (g.recipient_user_id = ? AND g.read_at IS NOT NULL) 
-                    OR g.recipient_email = ?
-                )
+                AND (g.recipient_user_id = ? OR g.recipient_email = ?)
                 ORDER BY g.created_at DESC
                 LIMIT 1
             `, [bookId, userId, req.user.email]);
 
+            console.log(`Gift query executed with params: bookId=${bookId}, userId=${userId}, email=${req.user.email}`);
             console.log(`Gift query result: ${gifts.length} gifts found`);
+            
             if (gifts.length > 0) {
-                bookAccess = gifts[0];
+                const gift = gifts[0];
+                bookAccess = gift;
                 console.log(`Found gift access:`, {
-                    giftId: gifts[0].id,
-                    bookId: gifts[0].book_id,
-                    recipientUserId: gifts[0].recipient_user_id,
-                    readAt: gifts[0].read_at
+                    giftId: gift.id,
+                    bookId: gift.book_id,
+                    recipientUserId: gift.recipient_user_id,
+                    recipientEmail: gift.recipient_email,
+                    readAt: gift.read_at,
+                    title: gift.title
                 });
             } else {
-                // Debug: Check if gift exists but not claimed
-                const [unclaimedGifts] = await pool.query(`
-                    SELECT g.*, b.title, u.email as user_email
+                console.log(`No gifts found for this book. Checking all gifts for user...`);
+                // Debug: Check if gift exists but with different criteria
+                const [allUserGifts] = await pool.query(`
+                    SELECT g.*, b.title
                     FROM gifts g
                     JOIN books b ON g.book_id = b.id
-                    LEFT JOIN users u ON u.id = ?
-                    WHERE g.book_id = ? AND (g.recipient_user_id = ? OR g.recipient_email = ?)
-                `, [userId, bookId, userId, req.user.email]);
-
-                console.log(`Debug - All gifts for this book: ${unclaimedGifts.length}`);
-                console.log(`Debug - User email: ${req.user.email}, User ID: ${userId}`);
-                if (unclaimedGifts.length > 0) {
-                    unclaimedGifts.forEach((gift, index) => {
-                        console.log(`Gift ${index + 1}:`, {
-                            giftId: gift.id,
-                            recipientEmail: gift.recipient_email,
-                            recipientUserId: gift.recipient_user_id,
-                            readAt: gift.read_at,
-                            userEmail: gift.user_email,
-                            emailMatch: gift.recipient_email === req.user.email,
-                            userIdMatch: gift.recipient_user_id === userId
-                        });
-                    });
+                    WHERE g.recipient_user_id = ? OR g.recipient_email = ?
+                `, [userId, req.user.email]);
+                
+                console.log(`Total gifts for user: ${allUserGifts.length}`);
+                if (allUserGifts.length > 0) {
+                    console.log(`User's gifts:`, allUserGifts.map(g => ({
+                        giftId: g.id,
+                        bookId: g.book_id,
+                        title: g.title,
+                        recipientEmail: g.recipient_email,
+                        recipientUserId: g.recipient_user_id
+                    })));
                 }
             }
-        }
-
-        console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
+        }        console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
         if (bookAccess) {
             console.log(`Access granted:`, {
                 bookTitle: bookAccess.title,
