@@ -4,7 +4,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
         const { bookId } = req.params;
         const userId = req.user.id;
         const userEmail = req.user.email;
-        
+
         console.log(`Book access request: bookId=${bookId}, userId=${userId}, email=${userEmail}`);
 
         let bookAccess = null;
@@ -45,8 +45,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
         if (!bookAccess) {
             console.log(`❌ ACCESS DENIED - No order or gift found`);
-            return res.status(403).json({ 
-                message: 'You do not have access to this book. Please purchase it or check if it was gifted to you.' 
+            return res.status(403).json({
+                message: 'You do not have access to this book. Please purchase it or check if it was gifted to you.'
             });
         }
 
