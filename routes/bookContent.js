@@ -185,7 +185,11 @@ router.get('/:bookId/read', auth, async (req, res) => {
         let bookAccess = null;
         if (orders.length > 0) {
             bookAccess = orders[0];
+            console.log(`Found direct order access for user ${userId}, book ${bookId}`);
         } else {
+            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookId}`);
+            
+            // Check for gifts - user can access if they're the recipient and gift is claimed
             const [gifts] = await pool.query(`
                 SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
                 FROM gifts g
@@ -195,8 +199,40 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 LIMIT 1
             `, [bookId, userId]);
 
+            console.log(`Gift query result: ${gifts.length} gifts found`);
             if (gifts.length > 0) {
                 bookAccess = gifts[0];
+                console.log(`Found gift access:`, {
+                    giftId: gifts[0].id,
+                    bookId: gifts[0].book_id,
+                    recipientUserId: gifts[0].recipient_user_id,
+                    readAt: gifts[0].read_at
+                });
+            } else {
+                // Debug: Check if gift exists but not claimed
+                const [unclaimedGifts] = await pool.query(`
+                    SELECT g.*, b.title, u.email as user_email
+                    FROM gifts g
+                    JOIN books b ON g.book_id = b.id
+                    LEFT JOIN users u ON u.id = ?
+                    WHERE g.book_id = ? AND (g.recipient_user_id = ? OR g.recipient_email = ?)
+                `, [userId, bookId, userId, req.user.email]);
+                
+                console.log(`Debug - All gifts for this book: ${unclaimedGifts.length}`);
+                console.log(`Debug - User email: ${req.user.email}, User ID: ${userId}`);
+                if (unclaimedGifts.length > 0) {
+                    unclaimedGifts.forEach((gift, index) => {
+                        console.log(`Gift ${index + 1}:`, {
+                            giftId: gift.id,
+                            recipientEmail: gift.recipient_email,
+                            recipientUserId: gift.recipient_user_id,
+                            readAt: gift.read_at,
+                            userEmail: gift.user_email,
+                            emailMatch: gift.recipient_email === req.user.email,
+                            userIdMatch: gift.recipient_user_id === userId
+                        });
+                    });
+                }
             }
         }
 
@@ -213,7 +249,10 @@ router.get('/:bookId/read', auth, async (req, res) => {
         }
 
         if (!bookAccess) {
-            return res.status(403).json({ message: 'You do not have access to this book' });
+            console.log(`Access denied for user ${userId}, book ${bookId} - no valid order or claimed gift found`);
+            return res.status(403).json({ 
+                message: 'You do not have access to this book. If this book was gifted to you, please make sure you have claimed it first.' 
+            });
         }
 
         // Ensure book has content URL
