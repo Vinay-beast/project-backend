@@ -200,7 +200,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
     try {
         const { bookId } = req.params;
         const userId = req.user.id;
-        
+
         // Ensure bookId is string (it should be, but let's be explicit)
         const bookIdStr = String(bookId);
 
