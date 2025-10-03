@@ -166,7 +166,7 @@ router.get('/debug/gifts', auth, async (req, res) => {
     try {
         const userId = req.user.id;
         const userEmail = req.user.email;
-        
+
         const [gifts] = await pool.query(`
             SELECT g.*, b.title, b.id as book_id
             FROM gifts g
@@ -239,7 +239,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
             console.log(`Gift query executed with params: bookId=${bookId}, userId=${userId}, email=${req.user.email}`);
             console.log(`Gift query result: ${gifts.length} gifts found`);
-            
+
             if (gifts.length > 0) {
                 const gift = gifts[0];
                 bookAccess = gift;
@@ -260,7 +260,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                     JOIN books b ON g.book_id = b.id
                     WHERE g.recipient_user_id = ? OR g.recipient_email = ?
                 `, [userId, req.user.email]);
-                
+
                 console.log(`Total gifts for user: ${allUserGifts.length}`);
                 if (allUserGifts.length > 0) {
                     console.log(`User's gifts:`, allUserGifts.map(g => ({
@@ -272,7 +272,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                     })));
                 }
             }
-        }        console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
+        } console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
         if (bookAccess) {
             console.log(`Access granted:`, {
                 bookTitle: bookAccess.title,
