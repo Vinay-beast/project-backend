@@ -271,6 +271,36 @@ router.get('/:bookId/read', auth, async (req, res) => {
                         bookId: g.book_id,
                         title: g.title,
                         recipientEmail: g.recipient_email,
+                        recipientUserId: g.recipient_user_id,
+                        readAt: g.read_at
+                    })));
+
+                    // Check if any of these gifts match our book
+                    const matchingGift = allUserGifts.find(g => g.book_id === bookIdStr);
+                    if (matchingGift) {
+                        console.log(`FOUND MATCHING GIFT! Using it for access:`, matchingGift);
+                        bookAccess = {
+                            ...matchingGift,
+                            mode: 'purchase',
+                            rental_end: null,
+                            access_source: 'gift'
+                        };
+                    }
+                }
+
+                // Additional debug: Check exact book ID matches
+                const [exactBookCheck] = await pool.query(`
+                    SELECT g.*, b.title
+                    FROM gifts g
+                    JOIN books b ON g.book_id = b.id
+                    WHERE g.book_id = ?
+                `, [bookIdStr]);
+
+                console.log(`Books with exact ID ${bookIdStr}: ${exactBookCheck.length}`);
+                if (exactBookCheck.length > 0) {
+                    console.log(`Book ${bookIdStr} gifts exist:`, exactBookCheck.map(g => ({
+                        giftId: g.id,
+                        recipientEmail: g.recipient_email,
                         recipientUserId: g.recipient_user_id
                     })));
                 }
