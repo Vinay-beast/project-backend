@@ -188,16 +188,21 @@ router.get('/:bookId/read', auth, async (req, res) => {
             console.log(`Found direct order access for user ${userId}, book ${bookId}`);
         } else {
             console.log(`No direct order found, checking gifts for user ${userId}, book ${bookId}`);
-            
+
             // Check for gifts - user can access if they're the recipient and gift is claimed
+            // OR if the gift was sent to their email (auto-claim)
             const [gifts] = await pool.query(`
                 SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
                 FROM gifts g
                 JOIN books b ON g.book_id = b.id
-                WHERE g.book_id = ? AND g.recipient_user_id = ? AND g.read_at IS NOT NULL
+                WHERE g.book_id = ? 
+                AND (
+                    (g.recipient_user_id = ? AND g.read_at IS NOT NULL) 
+                    OR g.recipient_email = ?
+                )
                 ORDER BY g.created_at DESC
                 LIMIT 1
-            `, [bookId, userId]);
+            `, [bookId, userId, req.user.email]);
 
             console.log(`Gift query result: ${gifts.length} gifts found`);
             if (gifts.length > 0) {
@@ -217,7 +222,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                     LEFT JOIN users u ON u.id = ?
                     WHERE g.book_id = ? AND (g.recipient_user_id = ? OR g.recipient_email = ?)
                 `, [userId, bookId, userId, req.user.email]);
-                
+
                 console.log(`Debug - All gifts for this book: ${unclaimedGifts.length}`);
                 console.log(`Debug - User email: ${req.user.email}, User ID: ${userId}`);
                 if (unclaimedGifts.length > 0) {
@@ -250,8 +255,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
         if (!bookAccess) {
             console.log(`Access denied for user ${userId}, book ${bookId} - no valid order or claimed gift found`);
-            return res.status(403).json({ 
-                message: 'You do not have access to this book. If this book was gifted to you, please make sure you have claimed it first.' 
+            return res.status(403).json({
+                message: 'You do not have access to this book. If this book was gifted to you, please make sure you have claimed it first.'
             });
         }
 
