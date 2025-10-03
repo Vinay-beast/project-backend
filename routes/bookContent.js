@@ -200,12 +200,15 @@ router.get('/:bookId/read', auth, async (req, res) => {
     try {
         const { bookId } = req.params;
         const userId = req.user.id;
+        
+        // Ensure bookId is string (it should be, but let's be explicit)
+        const bookIdStr = String(bookId);
 
-        console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}, userEmail=${req.user.email}`);
+        console.log(`Book reading access requested: bookId=${bookIdStr} (type: ${typeof bookIdStr}), userId=${userId}, userEmail=${req.user.email}`);
 
         // Check if user has access to this book (purchased, rented, or received as gift)
         // First check for direct orders (purchase/rental)
-        console.log(`Checking direct orders for user ${userId}, book ${bookId}`);
+        console.log(`Checking direct orders for user ${userId}, book ${bookIdStr}`);
         const [orders] = await pool.query(`
             SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end, 'order' as access_source
             FROM orders o
@@ -214,7 +217,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
             WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
             ORDER BY o.created_at DESC
             LIMIT 1
-        `, [bookId, userId]);
+        `, [bookIdStr, userId]);
 
         console.log(`Direct orders found: ${orders.length}`);
 
@@ -222,9 +225,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
         let bookAccess = null;
         if (orders.length > 0) {
             bookAccess = orders[0];
-            console.log(`Found direct order access for user ${userId}, book ${bookId}`);
+            console.log(`Found direct order access for user ${userId}, book ${bookIdStr}`);
         } else {
-            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookId}, email ${req.user.email}`);
+            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookIdStr}, email ${req.user.email}`);
 
             // Check for gifts - user can access if they're the recipient
             const [gifts] = await pool.query(`
@@ -235,9 +238,9 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 AND (g.recipient_user_id = ? OR g.recipient_email = ?)
                 ORDER BY g.created_at DESC
                 LIMIT 1
-            `, [bookId, userId, req.user.email]);
+            `, [bookIdStr, userId, req.user.email]);
 
-            console.log(`Gift query executed with params: bookId=${bookId}, userId=${userId}, email=${req.user.email}`);
+            console.log(`Gift query executed with params: bookId=${bookIdStr}, userId=${userId}, email=${req.user.email}`);
             console.log(`Gift query result: ${gifts.length} gifts found`);
 
             if (gifts.length > 0) {
