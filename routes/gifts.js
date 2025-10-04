@@ -81,7 +81,7 @@ router.post('/read-all', auth, async (req, res) => {
 router.get('/mine', auth, async (req, res) => {
     try {
         const [rows] = await pool.query(
-            `SELECT g.*, b.title, b.author, b.image_url, u.name as sender_name, u.email as sender_email
+            `SELECT g.*, b.id as book_id, b.title, b.author, b.image_url, u.name as sender_name, u.email as sender_email
          FROM gifts g
          JOIN books b ON b.id = g.book_id
          JOIN orders o ON o.id = g.order_id
