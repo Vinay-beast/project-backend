@@ -230,6 +230,8 @@ router.get('/:bookId/read', auth, async (req, res) => {
             console.log(`No direct order found, checking gifts for user ${userId}, book ${bookIdStr}, email ${req.user.email}`);
 
             // Check for gifts - user can access if they're the recipient
+            console.log(`🎁 Checking gifts with params: bookId="${bookIdStr}", userId=${userId}, email="${req.user.email}"`);
+            
             const [gifts] = await pool.query(`
                 SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
                 FROM gifts g
@@ -240,20 +242,37 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 LIMIT 1
             `, [bookIdStr, userId, req.user.email]);
 
-            console.log(`Gift query executed with params: bookId=${bookIdStr}, userId=${userId}, email=${req.user.email}`);
-            console.log(`Gift query result: ${gifts.length} gifts found`);
-
+            console.log(`🎁 Gift query result: ${gifts.length} gifts found`);
+            
             if (gifts.length > 0) {
                 const gift = gifts[0];
-                bookAccess = gift;
-                console.log(`Found gift access:`, {
+                console.log(`🎁 Gift found:`, {
                     giftId: gift.id,
                     bookId: gift.book_id,
                     recipientUserId: gift.recipient_user_id,
                     recipientEmail: gift.recipient_email,
                     readAt: gift.read_at,
-                    title: gift.title
+                    title: gift.title,
+                    hasContentUrl: !!gift.content_url
                 });
+                
+                bookAccess = gift;
+                console.log(`🎁 GIFT ACCESS GRANTED!`);
+            } else {
+                // Additional debug: Check ALL gifts for this user regardless of book
+                console.log(`🔍 No gifts found for book ${bookIdStr}. Checking ALL user gifts...`);
+                const [allGifts] = await pool.query(`
+                    SELECT g.book_id, g.recipient_user_id, g.recipient_email, g.read_at, b.title
+                    FROM gifts g
+                    JOIN books b ON g.book_id = b.id
+                    WHERE g.recipient_user_id = ? OR g.recipient_email = ?
+                `, [userId, req.user.email]);
+                
+                console.log(`🔍 Total gifts for user: ${allGifts.length}`);
+                allGifts.forEach((g, i) => {
+                    console.log(`🔍 Gift ${i+1}: bookId="${g.book_id}", title="${g.title}", userId=${g.recipient_user_id}, email="${g.recipient_email}", readAt=${g.read_at}`);
+                });
+            }
             } else {
                 console.log(`No gifts found for this book. Checking all gifts for user...`);
                 // Debug: Check if gift exists but with different criteria
