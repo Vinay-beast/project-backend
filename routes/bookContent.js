@@ -238,6 +238,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 JOIN books b ON g.book_id = b.id
                 WHERE g.book_id = ? 
                 AND (g.recipient_user_id = ? OR g.recipient_email = ?)
+                AND g.read_at IS NOT NULL
                 ORDER BY g.created_at DESC
                 LIMIT 1
             `, [bookIdStr, userId, req.user.email]);

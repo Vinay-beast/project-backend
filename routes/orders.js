@@ -165,7 +165,7 @@ router.post('/', auth, async (req, res) => {
                     user_id, mode, total, shipping_address_id,
                     payment_method, notes, rental_duration,
                     rental_end, gift_email, shipping_speed,
-                    shipping_fee, cod_fee,
+                    shipping_fee, cod_fee, payment_status,
                     status, created_at, delivery_eta
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
                 [
@@ -181,7 +181,8 @@ router.post('/', auth, async (req, res) => {
                     mode === 'buy' ? (shipping_speed || 'standard') : null,
                     Number(shippingFee),
                     Number(codFee),
-                    initialStatus,
+                    'pending', // Set payment status to pending initially
+                    'Pending', // Set initial status to Pending for all orders
                     deliveryEta
                 ]
             );
@@ -196,21 +197,9 @@ router.post('/', auth, async (req, res) => {
                 );
             }
 
-            // ---------- GIFTS (unchanged semantics) ----------
-            if (mode === 'gift') {
-                let recipientUserId = null;
-                const [u] = await conn.query('SELECT id FROM users WHERE email = ?', [gift_email]);
-                if (u.length) recipientUserId = u[0].id;
-
-                for (const item of items) {
-                    const token = crypto.randomBytes(24).toString('hex');
-                    await conn.query(
-                        `INSERT INTO gifts (order_id, book_id, quantity, recipient_email, claim_token, recipient_user_id)
-                         VALUES (?, ?, ?, ?, ?, ?)`,
-                        [orderId, item.book_id, item.quantity, gift_email, token, recipientUserId]
-                    );
-                }
-            }
+            // ---------- GIFTS CREATION MOVED TO PAYMENT VERIFICATION ----------
+            // Gifts will be created only after successful payment verification
+            // This prevents gift creation when payment is cancelled or failed
 
             await conn.commit();
 

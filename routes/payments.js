@@ -114,17 +114,26 @@ router.post('/verify', auth, async (req, res) => {
         // Get payment details from Razorpay
         const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
-        // Update order status in database
+        // Check if payment was actually successful
+        if (payment.status !== 'captured' && payment.status !== 'authorized') {
+            return res.status(400).json({
+                success: false,
+                message: `Payment was not successful. Status: ${payment.status}`
+            });
+        }
+
+        // Update order status in database only if payment is successful
+        const paymentStatus = payment.status === 'captured' ? 'completed' : 'pending';
         await pool.query(`
             UPDATE orders 
             SET 
-                payment_status = 'completed',
+                payment_status = ?,
                 razorpay_payment_id = ?,
                 razorpay_signature = ?,
                 payment_method = 'razorpay',
                 updated_at = NOW()
             WHERE razorpay_order_id = ? AND user_id = ?
-        `, [razorpay_payment_id, razorpay_signature, razorpay_order_id, req.user.id]);
+        `, [paymentStatus, razorpay_payment_id, razorpay_signature, razorpay_order_id, req.user.id]);
 
         // Get updated order details
         const [updatedOrder] = await pool.query(
@@ -132,10 +141,10 @@ router.post('/verify', auth, async (req, res) => {
             [razorpay_order_id, req.user.id]
         );
 
-        if (updatedOrder.length) {
+        if (updatedOrder.length && paymentStatus === 'completed') {
             const order = updatedOrder[0];
 
-            // Update order status based on mode
+            // Update order status based on mode - only if payment is completed
             let newStatus = 'Pending';
             if (order.mode === 'buy') {
                 newStatus = 'Pending'; // Will be updated to Delivered when delivery_eta passes
@@ -149,6 +158,36 @@ router.post('/verify', auth, async (req, res) => {
                 'UPDATE orders SET status = ? WHERE id = ?',
                 [newStatus, order.id]
             );
+
+            // Create gifts only after successful payment - for gift orders
+            if (order.mode === 'gift' && order.gift_email) {
+                const crypto = require('crypto');
+
+                // Find recipient user ID if they exist
+                let recipientUserId = null;
+                const [users] = await pool.query('SELECT id FROM users WHERE email = ?', [order.gift_email]);
+                if (users.length) {
+                    recipientUserId = users[0].id;
+                }
+
+                // Get order items to create gifts
+                const [orderItems] = await pool.query(
+                    'SELECT book_id, quantity FROM order_items WHERE order_id = ?',
+                    [order.id]
+                );
+
+                // Create gift entries
+                for (const item of orderItems) {
+                    const token = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO gifts (order_id, book_id, quantity, recipient_email, claim_token, recipient_user_id)
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [order.id, item.book_id, item.quantity, order.gift_email, token, recipientUserId]
+                    );
+                }
+
+                console.log(`Gifts created for order ${order.id} to recipient ${order.gift_email}`);
+            }
         }
 
         res.json({
