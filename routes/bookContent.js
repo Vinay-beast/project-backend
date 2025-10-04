@@ -247,7 +247,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
             if (gifts.length > 0) {
                 const gift = gifts[0];
-                console.log(`🎁 Gift found:`, {
+                console.log(` Gift found:`, {
                     giftId: gift.id,
                     bookId: gift.book_id,
                     recipientUserId: gift.recipient_user_id,
