@@ -223,11 +223,19 @@ router.post('/', auth, async (req, res) => {
 
             // 🔔 SEND EMAIL NOTIFICATION via Azure Logic App
             try {
+                // ✅ Calculate user-specific order number (how many completed orders this user has)
+                const [userOrderCount] = await conn.query(
+                    `SELECT COUNT(*) as count FROM orders 
+                     WHERE user_id = ? AND payment_status = 'completed'`,
+                    [req.user.id]
+                );
+                const userOrderNumber = userOrderCount[0].count;
+
                 const emailData = {
                     customerEmail: req.user.email,
                     customerName: req.user.name || 'Customer',
                     orderTotal: total.toFixed(2),
-                    orderId: orderId.toString(),
+                    orderId: `#${userOrderNumber}`, // User-specific order number instead of global ID
                     orderItems: processedItems.map(item => `Book ID: ${item.book_id} (Qty: ${item.quantity})`).join(', ')
                 };
 
