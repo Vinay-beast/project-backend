@@ -70,6 +70,9 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ message: 'gift_email is required for gifts' });
         }
 
+        // ✅ For Razorpay payments, allow creation but set status to 'pending'
+        // Order will be completed only after payment verification
+
         const conn = await pool.getConnection();
         await conn.beginTransaction();
 
@@ -158,22 +161,26 @@ router.post('/', auth, async (req, res) => {
 
             const initialStatus = mode === 'buy' ? 'Pending' : mode === 'rent' ? 'Active' : 'Delivered';
 
+            // ✅ Set payment_status to 'completed' for COD, 'pending' for others (will be updated after payment)
+            const initialPaymentStatus = (payment_method === 'cod') ? 'completed' : 'pending';
+
             // ---------- INSERT ORDER ----------
             // Ensure orders table has shipping_fee and cod_fee columns (see migration if not)
             const [orderResult] = await conn.query(
                 `INSERT INTO orders (
                     user_id, mode, total, shipping_address_id,
-                    payment_method, notes, rental_duration,
+                    payment_method, payment_status, notes, rental_duration,
                     rental_end, gift_email, shipping_speed,
                     shipping_fee, cod_fee,
                     status, created_at, delivery_eta
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
                 [
                     req.user.id,
                     mode,
                     Number(total.toFixed(2)),
                     shipping_address_id || null,
                     payment_method || null,
+                    initialPaymentStatus,
                     notes || null,
                     rental_duration || null,
                     rentalEnd,
@@ -271,8 +278,12 @@ router.post('/', auth, async (req, res) => {
 /* ------------------------ list current user's orders ------------------------ */
 router.get('/', auth, async (req, res) => {
     try {
+        // ✅ Only show orders with completed or null payment_status (exclude pending/failed payments)
         const [orders] = await pool.query(
-            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
+            `SELECT * FROM orders 
+             WHERE user_id = ? 
+             AND (payment_status = 'completed' OR payment_status IS NULL)
+             ORDER BY created_at DESC`,
             [req.user.id]
         );
         if (orders.length === 0) {
@@ -317,58 +328,6 @@ router.get('/:id', auth, async (req, res) => {
     } catch (err) {
         console.error('Error fetching single order:', err);
         return res.status(500).json({ message: 'Server error while fetching order' });
-    }
-});
-
-// Test endpoint to create a completed order for book reading testing
-router.post('/test-purchase/:bookId', auth, async (req, res) => {
-    try {
-        const { bookId } = req.params;
-        const userId = req.user.id;
-
-        // Check if book exists
-        const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
-        if (books.length === 0) {
-            return res.status(404).json({ message: 'Book not found' });
-        }
-
-        const book = books[0];
-
-        // Check if user already has a completed order for this book
-        const [existing] = await pool.query(`
-            SELECT o.* FROM orders o 
-            JOIN order_items oi ON o.id = oi.order_id 
-            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = "completed"
-        `, [bookId, userId]);
-
-        if (existing.length > 0) {
-            return res.json({ message: 'You already own this book', orderId: existing[0].id });
-        }
-
-        // Create a test purchase order with the correct schema
-        const [orderResult] = await pool.query(
-            `INSERT INTO orders (
-                user_id, mode, status, total, payment_method, payment_status, 
-                razorpay_order_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [userId, 'buy', 'completed', book.price, 'test', 'completed', `test_${Date.now()}`]
-        );
-
-        // Create order item
-        const [itemResult] = await pool.query(
-            `INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)`,
-            [orderResult.insertId, bookId, 1, book.price]
-        );
-
-        res.json({
-            message: 'Test purchase created successfully',
-            orderId: orderResult.insertId,
-            bookTitle: book.title
-        });
-
-    } catch (error) {
-        console.error('Error creating test purchase:', error);
-        res.status(500).json({ message: 'Failed to create test purchase' });
     }
 });
 

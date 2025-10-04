@@ -11,11 +11,13 @@ router.get('/', auth, async (req, res) => {
         // Users must manually claim gifts from the gifts section
 
         // Owned via BUY only (exclude gifts from owned section)
+        // ✅ Only include completed payments
         const [ownedBuy] = await conn.query(
             `SELECT DISTINCT oi.book_id
          FROM orders o
          JOIN order_items oi ON oi.order_id = o.id
-        WHERE o.user_id = ? AND o.mode = 'buy'`,
+        WHERE o.user_id = ? AND o.mode = 'buy'
+        AND o.payment_status = 'completed'`,
             [req.user.id]
         );
 
@@ -23,11 +25,13 @@ router.get('/', auth, async (req, res) => {
         // They should NOT appear in the owned section to maintain separation
 
         // Rented
+        // ✅ Only include completed payments
         const [rented] = await conn.query(
             `SELECT DISTINCT oi.book_id, o.rental_end
          FROM orders o
          JOIN order_items oi ON oi.order_id = o.id
-        WHERE o.user_id = ? AND o.mode = 'rent'`,
+        WHERE o.user_id = ? AND o.mode = 'rent'
+        AND o.payment_status = 'completed'`,
             [req.user.id]
         );
 

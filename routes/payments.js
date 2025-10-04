@@ -105,16 +105,36 @@ router.post('/verify', auth, async (req, res) => {
             .digest('hex');
 
         if (razorpay_signature !== expectedSign) {
+            // ✅ Mark order as failed on signature mismatch
+            await pool.query(
+                `UPDATE orders SET payment_status = 'failed', updated_at = NOW() 
+                 WHERE razorpay_order_id = ? AND user_id = ?`,
+                [razorpay_order_id, req.user.id]
+            );
             return res.status(400).json({
                 success: false,
                 message: 'Invalid payment signature'
             });
         }
 
-        // Get payment details from Razorpay
+        // ✅ Fetch payment details from Razorpay to verify actual payment status
         const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
-        // Update order status in database
+        // ✅ Check if payment was actually captured/successful
+        if (payment.status !== 'captured') {
+            // Mark order as failed if payment wasn't captured
+            await pool.query(
+                `UPDATE orders SET payment_status = 'failed', updated_at = NOW() 
+                 WHERE razorpay_order_id = ? AND user_id = ?`,
+                [razorpay_order_id, req.user.id]
+            );
+            return res.status(400).json({
+                success: false,
+                message: `Payment ${payment.status}. Please try again.`
+            });
+        }
+
+        // ✅ Payment successful - Update order status in database
         await pool.query(`
             UPDATE orders 
             SET 
