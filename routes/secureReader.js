@@ -5,6 +5,35 @@ const auth = require('../middleware/auth');
 const pool = require('../config/database');
 const fetch = require('node-fetch');
 
+// ✅ Helper function to check book access (purchase, rent, or gift)
+async function checkBookAccess(bookId, userId) {
+    // Check orders (buy/rent)
+    const [orders] = await pool.query(`
+        SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
+        FROM orders o
+        JOIN order_items oi ON o.id = oi.order_id
+        JOIN books b ON oi.book_id = b.id
+        WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
+        ORDER BY o.created_at DESC
+        LIMIT 1
+    `, [bookId, userId]);
+
+    // Check gifts
+    const [gifts] = await pool.query(`
+        SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'gift' as mode, NULL as rental_end
+        FROM gifts g
+        JOIN books b ON b.id = g.book_id
+        WHERE g.book_id = ? AND g.recipient_user_id = ?
+        ORDER BY g.created_at DESC
+        LIMIT 1
+    `, [bookId, userId]);
+
+    console.log(`Access check: ${orders.length} orders, ${gifts.length} gifts found`);
+
+    // Return order if exists, otherwise gift, otherwise null
+    return orders.length > 0 ? orders[0] : (gifts.length > 0 ? gifts[0] : null);
+}
+
 // Serve PDF with download prevention headers
 router.get('/:bookId', async (req, res) => {
     try {
@@ -30,26 +59,15 @@ router.get('/:bookId', async (req, res) => {
             return res.status(401).json({ message: 'Invalid token payload' });
         }
 
-        // Verify user has access to this book
-        const [orders] = await pool.query(`
-            SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
-            FROM orders o
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN books b ON oi.book_id = b.id
-            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
-            ORDER BY o.created_at DESC
-            LIMIT 1
-        `, [bookId, userId]);
-
+        // ✅ Check if user has access (purchase, rent, or gift)
         console.log(`Secure PDF access requested: bookId=${bookId}, userId=${userId}`);
-        console.log(`Found ${orders.length} matching orders`);
+        const order = await checkBookAccess(bookId, userId);
 
-        if (orders.length === 0) {
+        if (!order) {
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 
-        const order = orders[0];
-        console.log(`Order details: content_url=${order.content_url ? 'exists' : 'missing'}, mode=${order.mode}`);
+        console.log(`Access granted: content_url=${order.content_url ? 'exists' : 'missing'}, mode=${order.mode}`);
 
         // Check rental expiry
         if (order.mode === 'rent' && order.rental_end) {
@@ -174,26 +192,15 @@ router.get('/pdf/:bookId', async (req, res) => {
             return res.status(401).json({ message: 'Invalid token payload' });
         }
 
-        // Verify user has access to this book
-        const [orders] = await pool.query(`
-            SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
-            FROM orders o
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN books b ON oi.book_id = b.id
-            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
-            ORDER BY o.created_at DESC
-            LIMIT 1
-        `, [bookId, userId]);
+        // ✅ Check if user has access (purchase, rent, or gift)
+        console.log(`Secure PDF access requested (legacy): bookId=${bookId}, userId=${userId}`);
+        const order = await checkBookAccess(bookId, userId);
 
-        console.log(`Secure PDF access requested: bookId=${bookId}, userId=${userId}`);
-        console.log(`Found ${orders.length} matching orders`);
-
-        if (orders.length === 0) {
+        if (!order) {
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 
-        const order = orders[0];
-        console.log(`Order details: content_url=${order.content_url ? 'exists' : 'missing'}, mode=${order.mode}`);
+        console.log(`Access granted (legacy): content_url=${order.content_url ? 'exists' : 'missing'}, mode=${order.mode}`);
 
         // Check rental expiry
         if (order.mode === 'rent' && order.rental_end) {

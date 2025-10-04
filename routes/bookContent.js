@@ -169,7 +169,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
         console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}`);
 
-        // Check if user has access to this book (purchased or rented) - corrected query for proper schema
+        // Check if user has access to this book (purchased, rented, or received as gift)
         const [orders] = await pool.query(`
             SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
             FROM orders o
@@ -180,34 +180,53 @@ router.get('/:bookId/read', auth, async (req, res) => {
             LIMIT 1
         `, [bookId, userId]);
 
-        console.log(`Orders found: ${orders.length}`);
-        if (orders.length > 0) {
+        // ✅ Also check if user received this book as a gift
+        const [gifts] = await pool.query(`
+            SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'gift' as mode, NULL as rental_end
+            FROM gifts g
+            JOIN books b ON b.id = g.book_id
+            WHERE g.book_id = ? AND g.recipient_user_id = ?
+            ORDER BY g.created_at DESC
+            LIMIT 1
+        `, [bookId, userId]);
+
+        console.log(`Orders found: ${orders.length}, Gifts found: ${gifts.length}`);
+
+        // Combine results - prioritize orders, then gifts
+        const access = orders.length > 0 ? orders[0] : (gifts.length > 0 ? gifts[0] : null);
+
+        if (access && orders.length > 0) {
             console.log(`Order details:`, {
-                orderId: orders[0].id,
-                bookTitle: orders[0].title,
-                hasContentUrl: !!orders[0].content_url,
-                contentType: orders[0].content_type,
-                mode: orders[0].mode,
-                rentalEnd: orders[0].rental_end
+                orderId: access.id,
+                bookTitle: access.title,
+                hasContentUrl: !!access.content_url,
+                contentType: access.content_type,
+                mode: access.mode,
+                rentalEnd: access.rental_end
+            });
+        } else if (access && gifts.length > 0) {
+            console.log(`Gift access:`, {
+                giftId: access.id,
+                bookTitle: access.title,
+                hasContentUrl: !!access.content_url,
+                contentType: access.content_type
             });
         }
 
-        if (orders.length === 0) {
+        if (!access) {
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 
-        const order = orders[0];
-
         // Ensure book has content URL
-        if (!order.content_url) {
+        if (!access.content_url) {
             console.log(`Book ${bookId} has no content URL`);
             return res.status(404).json({ message: 'Book content not available. Content has not been uploaded yet.' });
         }
 
         // Check if it's a rental and if it's still valid
-        if (order.mode === 'rent') {
+        if (access.mode === 'rent') {
             const now = new Date();
-            const expiryDate = new Date(order.rental_end);
+            const expiryDate = new Date(access.rental_end);
 
             if (now > expiryDate) {
                 return res.status(403).json({ message: 'Your rental period has expired' });
@@ -215,20 +234,20 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
             // For rentals, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: order.content_url,
-                contentType: order.content_type,
-                title: order.title,
-                pageCount: order.page_count,
+                readingUrl: access.content_url,
+                contentType: access.content_type,
+                title: access.title,
+                pageCount: access.page_count,
                 accessType: 'rental',
-                expiresAt: order.rental_end
+                expiresAt: access.rental_end
             });
         } else {
-            // For purchased books, provide direct Azure URL (simple and works reliably)
+            // For purchased books or gifts, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: order.content_url,
-                contentType: order.content_type,
-                title: order.title,
-                pageCount: order.page_count,
+                readingUrl: access.content_url,
+                contentType: access.content_type,
+                title: access.title,
+                pageCount: access.page_count,
                 accessType: 'purchase'
             });
         }
