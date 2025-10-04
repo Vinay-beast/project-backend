@@ -231,7 +231,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
             // Check for gifts - user can access if they're the recipient
             console.log(`🎁 Checking gifts with params: bookId="${bookIdStr}", userId=${userId}, email="${req.user.email}"`);
-            
+
             const [gifts] = await pool.query(`
                 SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
                 FROM gifts g
@@ -243,7 +243,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
             `, [bookIdStr, userId, req.user.email]);
 
             console.log(`🎁 Gift query result: ${gifts.length} gifts found`);
-            
+
             if (gifts.length > 0) {
                 const gift = gifts[0];
                 console.log(`🎁 Gift found:`, {
@@ -255,7 +255,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                     title: gift.title,
                     hasContentUrl: !!gift.content_url
                 });
-                
+
                 bookAccess = gift;
                 console.log(`🎁 GIFT ACCESS GRANTED!`);
             } else {
@@ -267,64 +267,28 @@ router.get('/:bookId/read', auth, async (req, res) => {
                     JOIN books b ON g.book_id = b.id
                     WHERE g.recipient_user_id = ? OR g.recipient_email = ?
                 `, [userId, req.user.email]);
-                
+
                 console.log(`🔍 Total gifts for user: ${allGifts.length}`);
                 allGifts.forEach((g, i) => {
-                    console.log(`🔍 Gift ${i+1}: bookId="${g.book_id}", title="${g.title}", userId=${g.recipient_user_id}, email="${g.recipient_email}", readAt=${g.read_at}`);
+                    console.log(`🔍 Gift ${i + 1}: bookId="${g.book_id}", title="${g.title}", userId=${g.recipient_user_id}, email="${g.recipient_email}", readAt=${g.read_at}`);
                 });
-            }
-            } else {
-                console.log(`No gifts found for this book. Checking all gifts for user...`);
-                // Debug: Check if gift exists but with different criteria
-                const [allUserGifts] = await pool.query(`
-                    SELECT g.*, b.title
-                    FROM gifts g
-                    JOIN books b ON g.book_id = b.id
-                    WHERE g.recipient_user_id = ? OR g.recipient_email = ?
-                `, [userId, req.user.email]);
 
-                console.log(`Total gifts for user: ${allUserGifts.length}`);
-                if (allUserGifts.length > 0) {
-                    console.log(`User's gifts:`, allUserGifts.map(g => ({
-                        giftId: g.id,
-                        bookId: g.book_id,
-                        title: g.title,
-                        recipientEmail: g.recipient_email,
-                        recipientUserId: g.recipient_user_id,
-                        readAt: g.read_at
-                    })));
-
-                    // Check if any of these gifts match our book
-                    const matchingGift = allUserGifts.find(g => g.book_id === bookIdStr);
-                    if (matchingGift) {
-                        console.log(`FOUND MATCHING GIFT! Using it for access:`, matchingGift);
-                        bookAccess = {
-                            ...matchingGift,
-                            mode: 'purchase',
-                            rental_end: null,
-                            access_source: 'gift'
-                        };
-                    }
-                }
-
-                // Additional debug: Check exact book ID matches
-                const [exactBookCheck] = await pool.query(`
-                    SELECT g.*, b.title
-                    FROM gifts g
-                    JOIN books b ON g.book_id = b.id
-                    WHERE g.book_id = ?
-                `, [bookIdStr]);
-
-                console.log(`Books with exact ID ${bookIdStr}: ${exactBookCheck.length}`);
-                if (exactBookCheck.length > 0) {
-                    console.log(`Book ${bookIdStr} gifts exist:`, exactBookCheck.map(g => ({
-                        giftId: g.id,
-                        recipientEmail: g.recipient_email,
-                        recipientUserId: g.recipient_user_id
-                    })));
+                // Check if any of these gifts match our book
+                const matchingGift = allGifts.find(g => g.book_id === bookIdStr);
+                if (matchingGift) {
+                    console.log(`FOUND MATCHING GIFT! Using it for access:`, matchingGift);
+                    bookAccess = {
+                        ...matchingGift,
+                        mode: 'purchase',
+                        rental_end: null,
+                        access_source: 'gift'
+                    };
                 }
             }
-        } console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
+        }
+
+        // Final access check logging
+        console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
         if (bookAccess) {
             console.log(`Access granted:`, {
                 bookTitle: bookAccess.title,
