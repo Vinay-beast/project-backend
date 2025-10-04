@@ -192,11 +192,19 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
         console.log(`Orders found: ${orders.length}, Gifts found: ${gifts.length}`);
 
+        // 🔍 DEBUG: Log raw results
+        if (gifts.length > 0) {
+            console.log(`Gift data:`, gifts[0]);
+        }
+        if (orders.length > 0) {
+            console.log(`Order data:`, orders[0]);
+        }
+
         // Combine results - prioritize orders, then gifts
         const access = orders.length > 0 ? orders[0] : (gifts.length > 0 ? gifts[0] : null);
 
         if (access && orders.length > 0) {
-            console.log(`Order details:`, {
+            console.log(`✅ Access granted via ORDER:`, {
                 orderId: access.id,
                 bookTitle: access.title,
                 hasContentUrl: !!access.content_url,
@@ -205,7 +213,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
                 rentalEnd: access.rental_end
             });
         } else if (access && gifts.length > 0) {
-            console.log(`Gift access:`, {
+            console.log(`✅ Access granted via GIFT:`, {
                 giftId: access.id,
                 bookTitle: access.title,
                 hasContentUrl: !!access.content_url,
@@ -214,6 +222,7 @@ router.get('/:bookId/read', auth, async (req, res) => {
         }
 
         if (!access) {
+            console.log(`❌ ACCESS DENIED: No orders or gifts found for userId=${userId}, bookId=${bookId}`);
             return res.status(403).json({ message: 'You do not have access to this book' });
         }
 

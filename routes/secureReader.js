@@ -7,6 +7,8 @@ const fetch = require('node-fetch');
 
 // ✅ Helper function to check book access (purchase, rent, or gift)
 async function checkBookAccess(bookId, userId) {
+    console.log(`🔍 checkBookAccess: bookId=${bookId}, userId=${userId}`);
+
     // Check orders (buy/rent)
     const [orders] = await pool.query(`
         SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
@@ -28,10 +30,25 @@ async function checkBookAccess(bookId, userId) {
         LIMIT 1
     `, [bookId, userId]);
 
-    console.log(`Access check: ${orders.length} orders, ${gifts.length} gifts found`);
+    console.log(`📊 Access check results: ${orders.length} orders, ${gifts.length} gifts found`);
+
+    if (gifts.length > 0) {
+        console.log(`🎁 Gift found:`, gifts[0]);
+    }
+    if (orders.length > 0) {
+        console.log(`📦 Order found:`, orders[0]);
+    }
 
     // Return order if exists, otherwise gift, otherwise null
-    return orders.length > 0 ? orders[0] : (gifts.length > 0 ? gifts[0] : null);
+    const result = orders.length > 0 ? orders[0] : (gifts.length > 0 ? gifts[0] : null);
+
+    if (!result) {
+        console.log(`❌ No access found for userId=${userId}, bookId=${bookId}`);
+    } else {
+        console.log(`✅ Access granted via ${orders.length > 0 ? 'ORDER' : 'GIFT'}`);
+    }
+
+    return result;
 }
 
 // Serve PDF with download prevention headers
