@@ -161,163 +161,53 @@ router.post('/:bookId/sample', auth, adminAuth, upload.single('sample'), async (
     }
 });
 
-// Debug endpoint to check gifts for a user
-router.get('/debug/gifts', auth, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const userEmail = req.user.email;
-
-        const [gifts] = await pool.query(`
-            SELECT g.*, b.title, b.id as book_id
-            FROM gifts g
-            JOIN books b ON g.book_id = b.id
-            WHERE g.recipient_user_id = ? OR g.recipient_email = ?
-            ORDER BY g.created_at DESC
-        `, [userId, userEmail]);
-
-        res.json({
-            userId,
-            userEmail,
-            totalGifts: gifts.length,
-            gifts: gifts.map(g => ({
-                giftId: g.id,
-                bookId: g.book_id,
-                bookTitle: g.title,
-                recipientEmail: g.recipient_email,
-                recipientUserId: g.recipient_user_id,
-                readAt: g.read_at,
-                createdAt: g.created_at
-            }))
-        });
-    } catch (error) {
-        console.error('Debug gifts error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
 // Get secure book content URL for reading (Based on purchase/rental)
 router.get('/:bookId/read', auth, async (req, res) => {
     try {
         const { bookId } = req.params;
         const userId = req.user.id;
 
-        // Ensure bookId is string (it should be, but let's be explicit)
-        const bookIdStr = String(bookId);
+        console.log(`Book reading access requested: bookId=${bookId}, userId=${userId}`);
 
-        console.log(`Book reading access requested: bookId=${bookIdStr} (type: ${typeof bookIdStr}), userId=${userId}, userEmail=${req.user.email}`);
-
-        // Check if user has access to this book (purchased, rented, or received as gift)
-        // First check for direct orders (purchase/rental)
-        console.log(`Checking direct orders for user ${userId}, book ${bookIdStr}`);
+        // Check if user has access to this book (purchased or rented) - corrected query for proper schema
         const [orders] = await pool.query(`
-            SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end, 'order' as access_source
+            SELECT o.*, oi.book_id, b.title, b.content_url, b.content_type, b.page_count, o.mode, o.rental_end
             FROM orders o
             JOIN order_items oi ON o.id = oi.order_id
             JOIN books b ON oi.book_id = b.id
             WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = 'completed'
             ORDER BY o.created_at DESC
             LIMIT 1
-        `, [bookIdStr, userId]);
+        `, [bookId, userId]);
 
-        console.log(`Direct orders found: ${orders.length}`);
-
-        // If no direct order found, check for gifts
-        let bookAccess = null;
+        console.log(`Orders found: ${orders.length}`);
         if (orders.length > 0) {
-            bookAccess = orders[0];
-            console.log(`Found direct order access for user ${userId}, book ${bookIdStr}`);
-        } else {
-            console.log(`No direct order found, checking gifts for user ${userId}, book ${bookIdStr}, email ${req.user.email}`);
-
-            // Check for gifts - user can access if they're the recipient
-            console.log(`🎁 Checking gifts with params: bookId="${bookIdStr}", userId=${userId}, email="${req.user.email}"`);
-
-            const [gifts] = await pool.query(`
-                SELECT g.*, b.title, b.content_url, b.content_type, b.page_count, 'purchase' as mode, null as rental_end, 'gift' as access_source
-                FROM gifts g
-                JOIN books b ON g.book_id = b.id
-                WHERE g.book_id = ? 
-                AND (g.recipient_user_id = ? OR g.recipient_email = ?)
-                AND g.read_at IS NOT NULL
-                ORDER BY g.created_at DESC
-                LIMIT 1
-            `, [bookIdStr, userId, req.user.email]);
-
-            console.log(`🎁 Gift query result: ${gifts.length} gifts found`);
-
-            if (gifts.length > 0) {
-                const gift = gifts[0];
-                console.log(` Gift found:`, {
-                    giftId: gift.id,
-                    bookId: gift.book_id,
-                    recipientUserId: gift.recipient_user_id,
-                    recipientEmail: gift.recipient_email,
-                    readAt: gift.read_at,
-                    title: gift.title,
-                    hasContentUrl: !!gift.content_url
-                });
-
-                bookAccess = gift;
-                console.log(`🎁 GIFT ACCESS GRANTED!`);
-            } else {
-                // Additional debug: Check ALL gifts for this user regardless of book
-                console.log(`🔍 No gifts found for book ${bookIdStr}. Checking ALL user gifts...`);
-                const [allGifts] = await pool.query(`
-                    SELECT g.book_id, g.recipient_user_id, g.recipient_email, g.read_at, b.title
-                    FROM gifts g
-                    JOIN books b ON g.book_id = b.id
-                    WHERE g.recipient_user_id = ? OR g.recipient_email = ?
-                `, [userId, req.user.email]);
-
-                console.log(`🔍 Total gifts for user: ${allGifts.length}`);
-                allGifts.forEach((g, i) => {
-                    console.log(`🔍 Gift ${i + 1}: bookId="${g.book_id}", title="${g.title}", userId=${g.recipient_user_id}, email="${g.recipient_email}", readAt=${g.read_at}`);
-                });
-
-                // Check if any of these gifts match our book
-                const matchingGift = allGifts.find(g => g.book_id === bookIdStr);
-                if (matchingGift) {
-                    console.log(`FOUND MATCHING GIFT! Using it for access:`, matchingGift);
-                    bookAccess = {
-                        ...matchingGift,
-                        mode: 'purchase',
-                        rental_end: null,
-                        access_source: 'gift'
-                    };
-                }
-            }
-        }
-
-        // Final access check logging
-        console.log(`Book access check: bookId=${bookId}, userId=${userId}`);
-        if (bookAccess) {
-            console.log(`Access granted:`, {
-                bookTitle: bookAccess.title,
-                hasContentUrl: !!bookAccess.content_url,
-                contentType: bookAccess.content_type,
-                mode: bookAccess.mode,
-                rentalEnd: bookAccess.rental_end,
-                accessSource: bookAccess.access_source
+            console.log(`Order details:`, {
+                orderId: orders[0].id,
+                bookTitle: orders[0].title,
+                hasContentUrl: !!orders[0].content_url,
+                contentType: orders[0].content_type,
+                mode: orders[0].mode,
+                rentalEnd: orders[0].rental_end
             });
         }
 
-        if (!bookAccess) {
-            console.log(`Access denied for user ${userId}, book ${bookId} - no valid order or claimed gift found`);
-            return res.status(403).json({
-                message: 'You do not have access to this book. If this book was gifted to you, please make sure you have claimed it first.'
-            });
+        if (orders.length === 0) {
+            return res.status(403).json({ message: 'You do not have access to this book' });
         }
+
+        const order = orders[0];
 
         // Ensure book has content URL
-        if (!bookAccess.content_url) {
+        if (!order.content_url) {
             console.log(`Book ${bookId} has no content URL`);
             return res.status(404).json({ message: 'Book content not available. Content has not been uploaded yet.' });
         }
 
         // Check if it's a rental and if it's still valid
-        if (bookAccess.mode === 'rent') {
+        if (order.mode === 'rent') {
             const now = new Date();
-            const expiryDate = new Date(bookAccess.rental_end);
+            const expiryDate = new Date(order.rental_end);
 
             if (now > expiryDate) {
                 return res.status(403).json({ message: 'Your rental period has expired' });
@@ -325,21 +215,21 @@ router.get('/:bookId/read', auth, async (req, res) => {
 
             // For rentals, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: bookAccess.content_url,
-                contentType: bookAccess.content_type,
-                title: bookAccess.title,
-                pageCount: bookAccess.page_count,
+                readingUrl: order.content_url,
+                contentType: order.content_type,
+                title: order.title,
+                pageCount: order.page_count,
                 accessType: 'rental',
-                expiresAt: bookAccess.rental_end
+                expiresAt: order.rental_end
             });
         } else {
-            // For purchased books and gifts, provide direct Azure URL (simple and works reliably)
+            // For purchased books, provide direct Azure URL (simple and works reliably)
             return res.json({
-                readingUrl: bookAccess.content_url,
-                contentType: bookAccess.content_type,
-                title: bookAccess.title,
-                pageCount: bookAccess.page_count,
-                accessType: bookAccess.access_source === 'gift' ? 'gift' : 'purchase'
+                readingUrl: order.content_url,
+                contentType: order.content_type,
+                title: order.title,
+                pageCount: order.page_count,
+                accessType: 'purchase'
             });
         }
     } catch (error) {

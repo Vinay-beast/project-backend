@@ -165,7 +165,7 @@ router.post('/', auth, async (req, res) => {
                     user_id, mode, total, shipping_address_id,
                     payment_method, notes, rental_duration,
                     rental_end, gift_email, shipping_speed,
-                    shipping_fee, cod_fee, payment_status,
+                    shipping_fee, cod_fee,
                     status, created_at, delivery_eta
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
                 [
@@ -181,8 +181,7 @@ router.post('/', auth, async (req, res) => {
                     mode === 'buy' ? (shipping_speed || 'standard') : null,
                     Number(shippingFee),
                     Number(codFee),
-                    'pending', // Set payment status to pending initially
-                    'Pending', // Set initial status to Pending for all orders
+                    initialStatus,
                     deliveryEta
                 ]
             );
@@ -197,9 +196,21 @@ router.post('/', auth, async (req, res) => {
                 );
             }
 
-            // ---------- GIFTS CREATION MOVED TO PAYMENT VERIFICATION ----------
-            // Gifts will be created only after successful payment verification
-            // This prevents gift creation when payment is cancelled or failed
+            // ---------- GIFTS (unchanged semantics) ----------
+            if (mode === 'gift') {
+                let recipientUserId = null;
+                const [u] = await conn.query('SELECT id FROM users WHERE email = ?', [gift_email]);
+                if (u.length) recipientUserId = u[0].id;
+
+                for (const item of items) {
+                    const token = crypto.randomBytes(24).toString('hex');
+                    await conn.query(
+                        `INSERT INTO gifts (order_id, book_id, quantity, recipient_email, claim_token, recipient_user_id)
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [orderId, item.book_id, item.quantity, gift_email, token, recipientUserId]
+                    );
+                }
+            }
 
             await conn.commit();
 
@@ -306,6 +317,58 @@ router.get('/:id', auth, async (req, res) => {
     } catch (err) {
         console.error('Error fetching single order:', err);
         return res.status(500).json({ message: 'Server error while fetching order' });
+    }
+});
+
+// Test endpoint to create a completed order for book reading testing
+router.post('/test-purchase/:bookId', auth, async (req, res) => {
+    try {
+        const { bookId } = req.params;
+        const userId = req.user.id;
+
+        // Check if book exists
+        const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+        if (books.length === 0) {
+            return res.status(404).json({ message: 'Book not found' });
+        }
+
+        const book = books[0];
+
+        // Check if user already has a completed order for this book
+        const [existing] = await pool.query(`
+            SELECT o.* FROM orders o 
+            JOIN order_items oi ON o.id = oi.order_id 
+            WHERE oi.book_id = ? AND o.user_id = ? AND o.payment_status = "completed"
+        `, [bookId, userId]);
+
+        if (existing.length > 0) {
+            return res.json({ message: 'You already own this book', orderId: existing[0].id });
+        }
+
+        // Create a test purchase order with the correct schema
+        const [orderResult] = await pool.query(
+            `INSERT INTO orders (
+                user_id, mode, status, total, payment_method, payment_status, 
+                razorpay_order_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, 'buy', 'completed', book.price, 'test', 'completed', `test_${Date.now()}`]
+        );
+
+        // Create order item
+        const [itemResult] = await pool.query(
+            `INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)`,
+            [orderResult.insertId, bookId, 1, book.price]
+        );
+
+        res.json({
+            message: 'Test purchase created successfully',
+            orderId: orderResult.insertId,
+            bookTitle: book.title
+        });
+
+    } catch (error) {
+        console.error('Error creating test purchase:', error);
+        res.status(500).json({ message: 'Failed to create test purchase' });
     }
 });
 

@@ -34,7 +34,7 @@ router.post('/claim/:giftId', auth, async (req, res) => {
         }
 
         const [r] = await pool.query(
-            `UPDATE gifts SET recipient_user_id = ?, read_at = NOW() WHERE id = ?`,
+            `UPDATE gifts SET recipient_user_id = ?, read_at = NOW() WHERE id = ? AND read_at IS NULL`,
             [req.user.id, giftId]
         );
 
