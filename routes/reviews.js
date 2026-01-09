@@ -3,6 +3,47 @@ const pool = require('../config/database');
 const auth = require('../middleware/auth');
 
 /**
+ * Check if user owns the book (bought, rented, or received as gift)
+ */
+async function userOwnsBook(userId, bookId) {
+    // Check if user bought or rented the book
+    const [orders] = await pool.query(
+        `SELECT o.id FROM orders o
+         JOIN order_items oi ON o.id = oi.order_id
+         WHERE o.user_id = ? AND oi.book_id = ? AND o.payment_status = 'captured'
+         LIMIT 1`,
+        [userId, bookId]
+    );
+    
+    if (orders.length > 0) return true;
+    
+    // Check if user received the book as a gift
+    const [gifts] = await pool.query(
+        `SELECT g.id FROM gifts g
+         JOIN orders o ON g.order_id = o.id
+         WHERE g.recipient_user_id = ? AND g.book_id = ? AND o.payment_status = 'captured'
+         LIMIT 1`,
+        [userId, bookId]
+    );
+    
+    return gifts.length > 0;
+}
+
+/**
+ * Check if user can review a book (owns it)
+ */
+router.get('/can-review/:bookId', auth, async (req, res) => {
+    try {
+        const bookId = req.params.bookId;
+        const canReview = await userOwnsBook(req.user.id, bookId);
+        return res.json({ canReview });
+    } catch (err) {
+        console.error("Error checking review eligibility:", err);
+        return res.status(500).json({ message: "Server error" });
+    }
+});
+
+/**
  * Get all reviews for a book (public)
  */
 router.get('/book/:bookId', async (req, res) => {
@@ -113,6 +154,12 @@ router.post('/:bookId', auth, async (req, res) => {
         const [books] = await pool.query('SELECT id FROM books WHERE id = ?', [bookId]);
         if (books.length === 0) {
             return res.status(404).json({ message: "Book not found" });
+        }
+
+        // Check if user owns the book (bought, rented, or received as gift)
+        const ownsBook = await userOwnsBook(req.user.id, bookId);
+        if (!ownsBook) {
+            return res.status(403).json({ message: "You must purchase, rent, or receive this book as a gift before reviewing" });
         }
 
         // Check if user already has a review
