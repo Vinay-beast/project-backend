@@ -10,7 +10,7 @@ router.get('/book/:bookId', async (req, res) => {
         const bookId = req.params.bookId;
 
         const [reviews] = await pool.query(
-            `SELECT r.id, r.user_id, r.book_id, r.rating, r.review_text, r.created_at, r.updated_at,
+            `SELECT r.id, r.user_id, r.book_id, r.rating, r.review_text, r.created_at,
                     u.name as user_name, u.profile_pic as user_avatar
              FROM reviews r
              JOIN users u ON r.user_id = u.id
