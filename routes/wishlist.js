@@ -53,8 +53,8 @@ router.post('/:bookId', auth, async (req, res) => {
             [req.user.id, bookId]
         );
 
-        return res.status(201).json({ 
-            message: "Book added to wishlist", 
+        return res.status(201).json({
+            message: "Book added to wishlist",
             id: result.insertId,
             book_id: bookId
         });

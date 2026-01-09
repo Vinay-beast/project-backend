@@ -154,6 +154,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/gifts', require('./routes/gifts'));
 app.use('/api/library', require('./routes/library'));
 app.use('/api/wishlist', require('./routes/wishlist'));
+app.use('/api/reviews', require('./routes/reviews'));
 app.use('/api/admin', require('./routes/admin'));
 
 

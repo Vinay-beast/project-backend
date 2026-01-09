@@ -222,3 +222,27 @@ CREATE TABLE IF NOT EXISTS wishlist (
 
 CREATE INDEX idx_wishlist_user ON wishlist(user_id);
 CREATE INDEX idx_wishlist_book ON wishlist(book_id);
+
+-- ================================
+-- Reviews & Ratings Table
+-- ================================
+CREATE TABLE IF NOT EXISTS reviews (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    book_id VARCHAR(10) NOT NULL,
+    rating TINYINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    review_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_user_book_review (user_id, book_id),
+    CONSTRAINT fk_reviews_user FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_reviews_book FOREIGN KEY (book_id)
+        REFERENCES books(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX idx_reviews_book ON reviews(book_id);
+CREATE INDEX idx_reviews_user ON reviews(user_id);
+CREATE INDEX idx_reviews_rating ON reviews(rating);
