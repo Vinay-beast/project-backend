@@ -46,22 +46,6 @@ CREATE TABLE IF NOT EXISTS users (
 			ON DELETE CASCADE ON UPDATE CASCADE
 	);
 
-	-- ================================
-	-- Payment Cards
-	-- ================================
-	CREATE TABLE IF NOT EXISTS payment_cards (
-		id INT PRIMARY KEY AUTO_INCREMENT,
-		user_id INT NOT NULL,
-		card_name VARCHAR(255) NOT NULL,
-		card_number VARCHAR(25) NOT NULL,
-		expiry VARCHAR(7) NOT NULL,
-		cvv varchar(4),
-		is_default BOOLEAN DEFAULT false,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		CONSTRAINT fk_cards_user FOREIGN KEY (user_id)
-			REFERENCES users(id)
-			ON DELETE CASCADE ON UPDATE CASCADE
-	);
 
 	-- ================================
 	-- Orders
@@ -218,3 +202,23 @@ ALTER TABLE books ADD COLUMN content_url VARCHAR(512) NULL COMMENT 'Azure Blob S
 ALTER TABLE books ADD COLUMN sample_url VARCHAR(512) NULL COMMENT 'Azure Blob Storage URL for book sample/preview';
 ALTER TABLE books ADD COLUMN content_type ENUM('pdf', 'epub', 'txt', 'html') DEFAULT 'pdf' COMMENT 'Type of book content';
 ALTER TABLE books ADD COLUMN page_count INT DEFAULT 0 COMMENT 'Number of pages in the book';
+
+-- ================================
+-- Wishlist Table
+-- ================================
+CREATE TABLE IF NOT EXISTS wishlist (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    book_id VARCHAR(10) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_user_book (user_id, book_id),
+    CONSTRAINT fk_wishlist_user FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_wishlist_book FOREIGN KEY (book_id)
+        REFERENCES books(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX idx_wishlist_user ON wishlist(user_id);
+CREATE INDEX idx_wishlist_book ON wishlist(book_id);

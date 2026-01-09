@@ -10,7 +10,6 @@ const morgan = require('morgan');
 const pool = require('./config/database');         // mysql2/promise pool
 const auth = require('./middleware/auth');         // your JWT middleware
 
-// At the top of server.js, below require('dotenv').config();
 const admin = require('firebase-admin');
 
 // This code reads the secret key from a Render environment variable
@@ -66,7 +65,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // ----------------------------------------
-// Inline Addresses & Cards (basic endpoints)
+// Inline Addresses  (basic endpoints)
 // ----------------------------------------
 app.get('/api/users/addresses', auth, async (req, res, next) => {
     try {
@@ -154,6 +153,7 @@ app.use('/api/orders', require('./routes/orders'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/gifts', require('./routes/gifts'));
 app.use('/api/library', require('./routes/library'));
+app.use('/api/wishlist', require('./routes/wishlist'));
 app.use('/api/admin', require('./routes/admin'));
 
 
