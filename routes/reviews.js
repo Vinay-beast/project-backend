@@ -43,7 +43,7 @@ router.get('/book/:bookId', async (req, res) => {
 router.post('/ratings/bulk', async (req, res) => {
     try {
         const { bookIds } = req.body;
-        
+
         if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
             return res.json({});
         }

@@ -230,10 +230,9 @@ CREATE TABLE IF NOT EXISTS reviews (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
     book_id VARCHAR(10) NOT NULL,
-    rating TINYINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    rating TINYINT NOT NULL,
     review_text TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY unique_user_book_review (user_id, book_id),
     CONSTRAINT fk_reviews_user FOREIGN KEY (user_id)
         REFERENCES users(id)
