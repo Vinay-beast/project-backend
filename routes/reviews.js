@@ -6,26 +6,28 @@ const auth = require('../middleware/auth');
  * Check if user owns the book (bought, rented, or received as gift)
  */
 async function userOwnsBook(userId, bookId) {
-    // Check if user bought or rented the book
+    // Check if user bought or rented the book (any completed payment)
     const [orders] = await pool.query(
         `SELECT o.id FROM orders o
          JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.user_id = ? AND oi.book_id = ? AND o.payment_status = 'captured'
+         WHERE o.user_id = ? AND oi.book_id = ? 
+         AND (o.payment_status IN ('captured', 'completed') OR o.status != 'pending')
          LIMIT 1`,
         [userId, bookId]
     );
-    
+
     if (orders.length > 0) return true;
-    
+
     // Check if user received the book as a gift
     const [gifts] = await pool.query(
         `SELECT g.id FROM gifts g
          JOIN orders o ON g.order_id = o.id
-         WHERE g.recipient_user_id = ? AND g.book_id = ? AND o.payment_status = 'captured'
+         WHERE g.recipient_user_id = ? AND g.book_id = ?
+         AND (o.payment_status IN ('captured', 'completed') OR o.status != 'pending')
          LIMIT 1`,
         [userId, bookId]
     );
-    
+
     return gifts.length > 0;
 }
 
