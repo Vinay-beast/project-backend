@@ -157,6 +157,7 @@ app.use('/api/wishlist', require('./routes/wishlist'));
 app.use('/api/reviews', require('./routes/reviews'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/google-books', require('./routes/googleBooks'));
+app.use('/api/recommendations', require('./routes/recommendations'));
 
 
 
