@@ -174,7 +174,7 @@ function keywordClassify(text, keywordMap) {
     for (const [label, keywords] of Object.entries(keywordMap)) {
         let score = 0;
         let matches = 0;
-        
+
         for (const keyword of keywords) {
             if (lowerText.includes(keyword.toLowerCase())) {
                 // Exact word match gets higher score
@@ -280,7 +280,7 @@ async function intentAgent(userQuery) {
         console.log('   🔍 No specific intent found, trying broader search...');
         // Check for any book-related keywords
         const lowerQuery = userQuery.toLowerCase();
-        
+
         // Common genre-related words that might not be exact matches
         if (lowerQuery.includes('scary') || lowerQuery.includes('spooky')) {
             intent.genre = 'horror';
@@ -419,7 +419,7 @@ function moodAgent(book, intent) {
     if (matchCount >= 3) return 1.0;
     if (matchCount >= 2) return 0.85;
     if (matchCount >= 1) return 0.7;
-    
+
     // Check for partial mood match based on category
     const categoryMoodMap = {
         'horror': ['dark', 'thrilling', 'mysterious'],
@@ -430,7 +430,7 @@ function moodAgent(book, intent) {
         'philosophy': ['thought-provoking', 'educational'],
         'adventure': ['exciting', 'adventurous']
     };
-    
+
     const bookCategory = (book.category || '').toLowerCase();
     for (const [cat, moods] of Object.entries(categoryMoodMap)) {
         if (bookCategory.includes(cat) && moods.includes(intentMood)) {
@@ -550,7 +550,7 @@ async function recommendationAgent(userQuery, userId) {
 
     // Check if we have ANY intent
     const hasIntent = intent.genre || intent.mood || intent.length || intent.budget;
-    
+
     if (!hasIntent) {
         console.log('   ⚠️ No clear intent detected, returning popular books');
         const popular = await getPopularBooks();
@@ -641,7 +641,7 @@ async function getPopularBooks() {
         ORDER BY order_count DESC, b.created_at DESC
         LIMIT 5
     `);
-    
+
     // Add default scores for popular books
     return books.map(book => ({
         ...book,
@@ -726,9 +726,9 @@ router.post('/chat', auth, async (req, res) => {
 
     } catch (err) {
         console.error('❌ Recommendation error:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             message: 'Failed to get recommendations',
-            error: err.message 
+            error: err.message
         });
     }
 });
@@ -740,17 +740,17 @@ router.post('/chat', auth, async (req, res) => {
 router.get('/test', async (req, res) => {
     try {
         const testQuery = req.query.q || 'I want a philosophy book';
-        
+
         console.log('\n🧪 TEST MODE: Testing recommendation system');
         console.log(`   Query: "${testQuery}"`);
         console.log(`   HF Token Set: ${!!HF_API_TOKEN}`);
-        
+
         // Test intent extraction
         const intent = await intentAgent(testQuery);
-        
+
         // Get sample books
         const [books] = await pool.query('SELECT * FROM books WHERE stock > 0 LIMIT 3');
-        
+
         // Score sample books
         const sampleScores = books.map(book => ({
             title: book.title,
@@ -759,7 +759,7 @@ router.get('/test', async (req, res) => {
             mood: moodAgent(book, intent),
             length: lengthAgent(book, intent)
         }));
-        
+
         res.json({
             status: 'ok',
             testQuery,
@@ -779,9 +779,9 @@ router.get('/test', async (req, res) => {
             }
         });
     } catch (err) {
-        res.status(500).json({ 
-            status: 'error', 
-            error: err.message 
+        res.status(500).json({
+            status: 'error',
+            error: err.message
         });
     }
 });
