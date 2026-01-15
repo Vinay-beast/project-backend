@@ -36,7 +36,10 @@ Analyze the query and extract:
 2. mood: The emotional feel (exciting, relaxing, inspiring, thought-provoking, funny, emotional, dark, uplifting, romantic, mysterious) - null if not mentioned
 3. length_preference: short/medium/long - null if not mentioned
 4. max_budget: number in rupees - null if not mentioned
-5. keywords: array of important words from the query
+5. keywords: array of search terms to find matching books in the database.
+   IMPORTANT: Include the original words PLUS synonyms, related terms, and words commonly found in book titles/descriptions for this topic.
+   Think about famous books in this category and what words appear in their titles.
+   Generate at least 8-10 diverse keywords to maximize search matches.
 6. user_emotion: detected emotional state (stressed, sad, happy, bored, curious) - null if not clear
 7. book_count: how many books the user wants (1-10). Use these rules:
    - "a book", "one book", "1 book" → 1
@@ -74,7 +77,11 @@ RESPOND ONLY WITH VALID JSON:
 Given a user's mood/emotion and what they're looking for, determine:
 1. book_characteristics: what kind of books would help (e.g., "light, humorous, easy to read")
 2. avoid_characteristics: what to avoid (e.g., "heavy themes, dark endings")
-3. search_keywords: keywords to find matching books
+3. search_keywords: Keywords to search for matching books in the database.
+   Think about words that commonly appear in book TITLES and DESCRIPTIONS for this type of content.
+   Include synonyms and semantically related terms.
+   Think of famous/popular books in this category and include words from their titles.
+   Generate at least 8-10 diverse keywords.
 4. page_count_suggestion: ideal page count range
 5. reasoning: brief explanation of your mood analysis
 
@@ -339,6 +346,9 @@ async function filterBooks(books, filters) {
     return filtered;
 }
 
+// NOTE: Synonym expansion is now handled by the AI agents (INTENT and MOOD agents)
+// They generate expanded keywords with synonyms and related terms automatically
+
 // ============================================
 // MULTI-AGENT ORCHESTRATION
 // ============================================
@@ -398,33 +408,55 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
         // ========== Execute Database Search ==========
         console.log('\n💾 PHASE 5: Database Search');
         let books = [];
+        let matchedBooks = []; // Track books that actually match the query
 
         // Primary search based on Search Agent's strategy
         if (intentResult.genre) {
             console.log(`   Searching by genre: ${intentResult.genre}`);
             books = await searchBooksByCategory(intentResult.genre, 30);
+            matchedBooks = [...books]; // These are matched books
         }
 
-        // Keyword search if genre search found few results
-        if (books.length < 5) {
-            const keywords = [
-                ...(intentResult.keywords || []),
-                ...(moodResult.search_keywords || []),
-                ...(searchResult.search_terms || [])
-            ].filter(Boolean);
+        // ALWAYS do keyword search to find more relevant books
+        // Keywords are already expanded with synonyms by the AI agents
+        const keywords = [
+            ...(intentResult.keywords || []),
+            ...(moodResult.search_keywords || []),
+            ...(searchResult.search_terms || [])
+        ].filter(Boolean);
 
-            if (keywords.length > 0) {
-                console.log(`   Searching by keywords: ${keywords.join(', ')}`);
-                const keywordBooks = await searchBooksByKeywords(keywords, 30);
-                books = [...books, ...keywordBooks];
+        // Remove duplicates from combined keywords
+        const allKeywords = [...new Set(keywords.map(k => k.toLowerCase()))];
+
+        if (allKeywords.length > 0) {
+            console.log(`   Searching by keywords: ${allKeywords.join(', ')}`);
+            const keywordBooks = await searchBooksByKeywords(allKeywords, 30);
+
+            // Add to matched books (these are relevant matches)
+            for (const book of keywordBooks) {
+                if (!matchedBooks.find(b => b.id === book.id)) {
+                    matchedBooks.push(book);
+                }
             }
+            books = [...books, ...keywordBooks];
         }
 
-        // Fallback to popular books
-        if (books.length < 3) {
-            console.log(`   Falling back to popular books`);
-            const popularBooks = await getPopularBooks(10);
-            books = [...books, ...popularBooks];
+        // Get requested count for smart fallback
+        const requestedCount = Math.min(Math.max(intentResult.book_count || 5, 1), 10);
+
+        // Smart fallback: Only fill remaining slots with popular books
+        // Keep matched books and only add popular books to fill the gap
+        if (matchedBooks.length < requestedCount) {
+            const neededCount = requestedCount - matchedBooks.length + 5; // Get extra for filtering
+            console.log(`   Found ${matchedBooks.length} matching books, need ${requestedCount}. Fetching ${neededCount} popular books to fill gaps.`);
+            const popularBooks = await getPopularBooks(neededCount);
+
+            // Add popular books only if not already in matched books
+            for (const book of popularBooks) {
+                if (!books.find(b => b.id === book.id)) {
+                    books.push(book);
+                }
+            }
         }
 
         // Remove duplicates
@@ -455,13 +487,16 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
         const bookIds = books.map(b => b.id);
         const ratingsMap = await getBookRatings(bookIds);
 
-        // Add ratings to books
+        // Add ratings to books and mark if they are matched or fallback
+        const matchedBookIds = new Set(matchedBooks.map(b => b.id));
         books = books.map(b => ({
             ...b,
             avg_rating: ratingsMap[b.id]?.avg_rating || 0,
-            review_count: ratingsMap[b.id]?.review_count || 0
+            review_count: ratingsMap[b.id]?.review_count || 0,
+            isMatched: matchedBookIds.has(b.id) // Mark if book matched the query
         }));
         console.log(`   ⭐ Added ratings for ${Object.keys(ratingsMap).length} books`);
+        console.log(`   🎯 ${matchedBooks.length} books matched query, ${books.length - matchedBooks.length} are fallback`);
 
         // ========== AGENT 5: Ranking ==========
         console.log('\n📊 PHASE 6: Ranking');
@@ -474,6 +509,7 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
             pages: b.page_count,
             avg_rating: b.avg_rating,
             review_count: b.review_count,
+            isMatched: b.isMatched, // Tell ranking agent which books matched
             description: (b.description || '').substring(0, 100)
         }));
 
@@ -486,7 +522,12 @@ User Preferences: ${JSON.stringify(agentOutputs.history)}
 Books to rank (includes ratings and reviews):
 ${JSON.stringify(booksForRanking, null, 2)}
 
-IMPORTANT: Consider avg_rating (0-5 stars) and review_count when ranking. Higher rated books with more reviews should be preferred.`;
+IMPORTANT: 
+1. Books with "isMatched": true are directly relevant to the user's query - PRIORITIZE these books
+2. Books with "isMatched": false are fallback popular books - only recommend these to fill remaining slots
+3. Consider avg_rating (0-5 stars) and review_count when ranking
+4. Higher rated books with more reviews should be preferred
+5. ALWAYS put matched books before fallback books in the ranking`;
 
         const rankingResult = await callGroqAgent('RANKING',
             'Rank these books based on how well they match the user preferences',
@@ -495,40 +536,63 @@ IMPORTANT: Consider avg_rating (0-5 stars) and review_count when ranking. Higher
         agentOutputs.ranking = rankingResult;
 
         // ========== Get Top Ranked Books ==========
-        // Use book_count from intent, default to 5
-        const requestedCount = Math.min(Math.max(intentResult.book_count || 5, 1), 10);
+        // Use book_count from intent (already defined earlier)
         console.log(`   📚 User requested ${requestedCount} book(s)`);
-        
+
         let finalBooks = [];
 
         if (rankingResult.ranked_books && rankingResult.ranked_books.length > 0) {
-            // Sort by ranking agent's scores
-            const rankedIds = rankingResult.ranked_books
-                .sort((a, b) => (b.final_score || 0) - (a.final_score || 0))
-                .slice(0, requestedCount)
-                .map(r => r.book_id);
+            // Sort by ranking agent's scores, but boost matched books
+            const rankedBooks = rankingResult.ranked_books
+                .map(r => {
+                    const book = books.find(b => b.id === r.book_id);
+                    return {
+                        ...r,
+                        isMatched: book?.isMatched || false,
+                        // Boost matched books by adding 50 to their score for sorting priority
+                        sortScore: (r.final_score || 0) + (book?.isMatched ? 50 : 0)
+                    };
+                })
+                .sort((a, b) => b.sortScore - a.sortScore)
+                .slice(0, requestedCount);
 
             // Get full book details in ranked order
-            for (const id of rankedIds) {
-                const book = books.find(b => b.id === id);
+            for (const rankInfo of rankedBooks) {
+                const book = books.find(b => b.id === rankInfo.book_id);
                 if (book) {
-                    const rankInfo = rankingResult.ranked_books.find(r => r.book_id === id);
                     finalBooks.push({
                         ...book,
-                        match_score: rankInfo?.final_score || 80,
-                        recommendation_reason: rankInfo?.reason || 'Matches your preferences'
+                        match_score: rankInfo.final_score || 80,
+                        recommendation_reason: rankInfo.reason || (book.isMatched ? 'Matches your search criteria' : 'Popular recommendation')
                     });
                 }
             }
         }
 
-        // Fallback if ranking didn't work
-        if (finalBooks.length < 1) {
-            finalBooks = books.slice(0, requestedCount).map(b => ({
-                ...b,
-                match_score: 75,
-                recommendation_reason: 'Recommended based on your query'
-            }));
+        // Fallback if ranking didn't work - prioritize matched books
+        if (finalBooks.length < requestedCount) {
+            console.log(`   ⚠️ Ranking returned ${finalBooks.length} books, using fallback to fill ${requestedCount - finalBooks.length} slots`);
+            const existingIds = new Set(finalBooks.map(b => b.id));
+
+            // First, add remaining matched books
+            for (const book of books.filter(b => b.isMatched && !existingIds.has(b.id))) {
+                if (finalBooks.length >= requestedCount) break;
+                finalBooks.push({
+                    ...book,
+                    match_score: 75,
+                    recommendation_reason: 'Matches your search criteria'
+                });
+            }
+
+            // Then, add fallback books if still needed
+            for (const book of books.filter(b => !b.isMatched && !existingIds.has(b.id))) {
+                if (finalBooks.length >= requestedCount) break;
+                finalBooks.push({
+                    ...book,
+                    match_score: 60,
+                    recommendation_reason: 'Popular recommendation'
+                });
+            }
         }
 
         // ========== AGENT 6: Coordinator (Final Response) ==========
