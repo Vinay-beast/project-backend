@@ -99,10 +99,13 @@ RESPOND ONLY WITH VALID JSON:
 Given books and user preferences, for each book calculate:
 1. relevance_score: 0-100 based on genre/keyword match
 2. mood_score: 0-100 based on mood/emotional fit
-3. value_score: 0-100 based on price vs quality
-4. personalization_score: 0-100 based on user history match
-5. final_score: weighted combination
-6. recommendation_reason: why this book is recommended
+3. rating_score: 0-100 based on avg_rating (5 stars = 100) and review_count (more reviews = higher trust)
+4. value_score: 0-100 based on price vs quality
+5. personalization_score: 0-100 based on user history match
+6. final_score: weighted combination (relevance 30%, mood 20%, rating 25%, value 10%, personalization 15%)
+7. recommendation_reason: why this book is recommended (mention rating if high)
+
+IMPORTANT: Prioritize books with higher ratings (4+ stars) and more reviews. A book with 4.5 stars and 50 reviews is better than 5 stars with 1 review.
 
 Output top 5 books with scores.
 
@@ -133,11 +136,11 @@ RESPOND ONLY WITH VALID JSON:
 
 async function callGroqAgent(agentType, userMessage, context = '') {
     const agent = AGENTS[agentType];
-    
+
     console.log(`\n${'─'.repeat(50)}`);
     console.log(`${agent.name} starting...`);
     console.log(`   Role: ${agent.role}`);
-    
+
     return new Promise((resolve, reject) => {
         const requestBody = JSON.stringify({
             model: GROQ_MODEL,
@@ -166,16 +169,16 @@ async function callGroqAgent(agentType, userMessage, context = '') {
             res.on('end', () => {
                 try {
                     const result = JSON.parse(body);
-                    
+
                     if (result.error) {
                         console.log(`   ❌ Error: ${result.error.message}`);
                         reject(new Error(result.error.message));
                         return;
                     }
-                    
+
                     const content = result.choices[0]?.message?.content || '';
                     console.log(`   ✅ Response received`);
-                    
+
                     // Try to parse JSON from response
                     try {
                         // Extract JSON from response (handle markdown code blocks)
@@ -185,7 +188,7 @@ async function callGroqAgent(agentType, userMessage, context = '') {
                         } else if (content.includes('```')) {
                             jsonStr = content.split('```')[1].split('```')[0].trim();
                         }
-                        
+
                         const parsed = JSON.parse(jsonStr);
                         console.log(`   📤 Parsed output:`, JSON.stringify(parsed).substring(0, 100) + '...');
                         resolve(parsed);
@@ -234,14 +237,14 @@ async function searchBooksByCategory(category, limit = 20) {
 
 async function searchBooksByKeywords(keywords, limit = 20) {
     if (!keywords || keywords.length === 0) return [];
-    
-    const conditions = keywords.map(() => 
+
+    const conditions = keywords.map(() =>
         '(LOWER(title) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?) OR LOWER(author) LIKE LOWER(?) OR LOWER(category) LIKE LOWER(?))'
     ).join(' OR ');
-    
+
     const params = keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`, `%${kw}%`, `%${kw}%`]);
     params.push(limit);
-    
+
     const [books] = await pool.query(`
         SELECT id, title, author, category, price, stock, page_count, 
                description, image_url, created_at
@@ -255,7 +258,7 @@ async function searchBooksByKeywords(keywords, limit = 20) {
 
 async function getUserPurchaseHistory(userId) {
     if (!userId) return null;
-    
+
     const [purchases] = await pool.query(`
         SELECT DISTINCT 
             b.id, b.title, b.author, b.category, b.price, b.page_count,
@@ -267,26 +270,52 @@ async function getUserPurchaseHistory(userId) {
         ORDER BY o.created_at DESC
         LIMIT 20
     `, [userId]);
-    
+
     return purchases;
 }
 
 async function getPopularBooks(limit = 10) {
     const [books] = await pool.query(`
-        SELECT b.*, COUNT(oi.id) as order_count
+        SELECT b.*, COUNT(oi.id) as order_count,
+               COALESCE(AVG(r.rating), 0) as avg_rating,
+               COUNT(DISTINCT r.id) as review_count
         FROM books b
         LEFT JOIN order_items oi ON b.id = oi.book_id
+        LEFT JOIN reviews r ON b.id = r.book_id
         WHERE b.stock > 0
         GROUP BY b.id
-        ORDER BY order_count DESC, b.created_at DESC
+        ORDER BY order_count DESC, avg_rating DESC, b.created_at DESC
         LIMIT ?
     `, [limit]);
     return books;
 }
 
+// Get ratings for a list of books
+async function getBookRatings(bookIds) {
+    if (!bookIds || bookIds.length === 0) return {};
+    
+    const [ratings] = await pool.query(`
+        SELECT book_id, 
+               ROUND(AVG(rating), 1) as avg_rating, 
+               COUNT(*) as review_count
+        FROM reviews 
+        WHERE book_id IN (?)
+        GROUP BY book_id
+    `, [bookIds]);
+    
+    const ratingsMap = {};
+    ratings.forEach(r => {
+        ratingsMap[r.book_id] = {
+            avg_rating: r.avg_rating,
+            review_count: r.review_count
+        };
+    });
+    return ratingsMap;
+}
+
 async function filterBooks(books, filters) {
     let filtered = [...books];
-    
+
     if (filters.max_price) {
         filtered = filtered.filter(b => b.price <= filters.max_price);
     }
@@ -296,7 +325,7 @@ async function filterBooks(books, filters) {
     if (filters.max_pages) {
         filtered = filtered.filter(b => (b.page_count || 200) <= filters.max_pages);
     }
-    
+
     return filtered;
 }
 
@@ -311,61 +340,61 @@ async function runMultiAgentRecommendation(userQuery, userId) {
     console.log(`📝 Query: "${userQuery}"`);
     console.log(`👤 User ID: ${userId || 'anonymous'}`);
     console.log('═'.repeat(60));
-    
+
     const agentOutputs = {};
     const startTime = Date.now();
-    
+
     try {
         // ========== AGENT 1: Intent Analysis ==========
         console.log('\n🎯 PHASE 1: Intent Analysis');
         const intentResult = await callGroqAgent('INTENT', userQuery);
         agentOutputs.intent = intentResult;
-        
+
         // ========== AGENT 2: User History Analysis ==========
         console.log('\n📚 PHASE 2: User History Analysis');
         const purchaseHistory = await getUserPurchaseHistory(userId);
-        
+
         if (purchaseHistory && purchaseHistory.length > 0) {
-            const historyContext = `User's purchase history:\n${purchaseHistory.map(p => 
+            const historyContext = `User's purchase history:\n${purchaseHistory.map(p =>
                 `- "${p.title}" by ${p.author} (${p.category}, ₹${p.price})`
             ).join('\n')}`;
-            
+
             const historyResult = await callGroqAgent('HISTORY', userQuery, historyContext);
             agentOutputs.history = historyResult;
         } else {
             console.log('   ℹ️ No purchase history found - skipping personalization');
-            agentOutputs.history = { 
-                favorite_genres: [], 
-                recommendation_strategy: 'Show popular books as user is new' 
+            agentOutputs.history = {
+                favorite_genres: [],
+                recommendation_strategy: 'Show popular books as user is new'
             };
         }
-        
+
         // ========== AGENT 3: Mood Analysis ==========
         console.log('\n💭 PHASE 3: Mood Analysis');
         const moodContext = `Intent analysis: ${JSON.stringify(intentResult)}`;
         const moodResult = await callGroqAgent('MOOD', userQuery, moodContext);
         agentOutputs.mood = moodResult;
-        
+
         // ========== AGENT 4: Search Strategy ==========
         console.log('\n🔍 PHASE 4: Search Strategy');
         const searchContext = `
 Intent: ${JSON.stringify(intentResult)}
 User History: ${JSON.stringify(agentOutputs.history)}
 Mood Analysis: ${JSON.stringify(moodResult)}`;
-        
+
         const searchResult = await callGroqAgent('SEARCH', userQuery, searchContext);
         agentOutputs.search = searchResult;
-        
+
         // ========== Execute Database Search ==========
         console.log('\n💾 PHASE 5: Database Search');
         let books = [];
-        
+
         // Primary search based on Search Agent's strategy
         if (intentResult.genre) {
             console.log(`   Searching by genre: ${intentResult.genre}`);
             books = await searchBooksByCategory(intentResult.genre, 30);
         }
-        
+
         // Keyword search if genre search found few results
         if (books.length < 5) {
             const keywords = [
@@ -373,21 +402,21 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
                 ...(moodResult.search_keywords || []),
                 ...(searchResult.search_terms || [])
             ].filter(Boolean);
-            
+
             if (keywords.length > 0) {
                 console.log(`   Searching by keywords: ${keywords.join(', ')}`);
                 const keywordBooks = await searchBooksByKeywords(keywords, 30);
                 books = [...books, ...keywordBooks];
             }
         }
-        
+
         // Fallback to popular books
         if (books.length < 3) {
             console.log(`   Falling back to popular books`);
             const popularBooks = await getPopularBooks(10);
             books = [...books, ...popularBooks];
         }
-        
+
         // Remove duplicates
         const uniqueBooks = [];
         const seenIds = new Set();
@@ -398,19 +427,32 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
             }
         }
         books = uniqueBooks;
-        
+
         console.log(`   📚 Found ${books.length} unique books`);
-        
+
         // Apply filters
         const filters = {
             max_price: intentResult.max_budget,
             min_pages: moodResult.page_count_suggestion?.min,
             max_pages: moodResult.page_count_suggestion?.max
         };
-        
+
         books = await filterBooks(books, filters);
         console.log(`   📚 After filtering: ${books.length} books`);
+
+        // ========== Get Ratings for Books ==========
+        console.log('\n⭐ PHASE 5.5: Fetching Ratings & Reviews');
+        const bookIds = books.map(b => b.id);
+        const ratingsMap = await getBookRatings(bookIds);
         
+        // Add ratings to books
+        books = books.map(b => ({
+            ...b,
+            avg_rating: ratingsMap[b.id]?.avg_rating || 0,
+            review_count: ratingsMap[b.id]?.review_count || 0
+        }));
+        console.log(`   ⭐ Added ratings for ${Object.keys(ratingsMap).length} books`);
+
         // ========== AGENT 5: Ranking ==========
         console.log('\n📊 PHASE 6: Ranking');
         const booksForRanking = books.slice(0, 15).map(b => ({
@@ -420,34 +462,38 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
             category: b.category,
             price: b.price,
             pages: b.page_count,
+            avg_rating: b.avg_rating,
+            review_count: b.review_count,
             description: (b.description || '').substring(0, 100)
         }));
-        
+
         const rankingContext = `
 User Query: "${userQuery}"
 Intent: ${JSON.stringify(intentResult)}
 Mood: ${JSON.stringify(moodResult)}
 User Preferences: ${JSON.stringify(agentOutputs.history)}
 
-Books to rank:
-${JSON.stringify(booksForRanking, null, 2)}`;
-        
-        const rankingResult = await callGroqAgent('RANKING', 
+Books to rank (includes ratings and reviews):
+${JSON.stringify(booksForRanking, null, 2)}
+
+IMPORTANT: Consider avg_rating (0-5 stars) and review_count when ranking. Higher rated books with more reviews should be preferred.`;
+
+        const rankingResult = await callGroqAgent('RANKING',
             'Rank these books based on how well they match the user preferences',
             rankingContext
         );
         agentOutputs.ranking = rankingResult;
-        
+
         // ========== Get Top Ranked Books ==========
         let finalBooks = [];
-        
+
         if (rankingResult.ranked_books && rankingResult.ranked_books.length > 0) {
             // Sort by ranking agent's scores
             const rankedIds = rankingResult.ranked_books
                 .sort((a, b) => (b.final_score || 0) - (a.final_score || 0))
                 .slice(0, 5)
                 .map(r => r.book_id);
-            
+
             // Get full book details in ranked order
             for (const id of rankedIds) {
                 const book = books.find(b => b.id === id);
@@ -461,7 +507,7 @@ ${JSON.stringify(booksForRanking, null, 2)}`;
                 }
             }
         }
-        
+
         // Fallback if ranking didn't work
         if (finalBooks.length < 3) {
             finalBooks = books.slice(0, 5).map(b => ({
@@ -470,7 +516,7 @@ ${JSON.stringify(booksForRanking, null, 2)}`;
                 recommendation_reason: 'Recommended based on your query'
             }));
         }
-        
+
         // ========== AGENT 6: Coordinator (Final Response) ==========
         console.log('\n🤖 PHASE 7: Generating Response');
         const coordinatorContext = `
@@ -483,23 +529,23 @@ Agent Outputs:
 - Ranking Agent selected ${finalBooks.length} top books
 
 Top Recommended Books:
-${finalBooks.map((b, i) => `${i+1}. "${b.title}" by ${b.author} (₹${b.price}) - ${b.recommendation_reason}`).join('\n')}`;
-        
+${finalBooks.map((b, i) => `${i + 1}. "${b.title}" by ${b.author} (₹${b.price}) - ${b.recommendation_reason}`).join('\n')}`;
+
         const coordinatorResult = await callGroqAgent('COORDINATOR',
             'Generate a friendly response explaining these recommendations',
             coordinatorContext
         );
         agentOutputs.coordinator = coordinatorResult;
-        
+
         // ========== Final Output ==========
         const endTime = Date.now();
-        
+
         console.log('\n' + '═'.repeat(60));
         console.log('✅ MULTI-AGENT PROCESS COMPLETE');
         console.log(`   ⏱️ Total time: ${endTime - startTime}ms`);
         console.log(`   📚 Books recommended: ${finalBooks.length}`);
         console.log('═'.repeat(60) + '\n');
-        
+
         return {
             success: true,
             message: coordinatorResult.message || "Here are your personalized recommendations!",
@@ -555,13 +601,13 @@ ${finalBooks.map((b, i) => `${i+1}. "${b.title}" by ${b.author} (₹${b.price}) 
                 booksRecommended: finalBooks.length
             }
         };
-        
+
     } catch (error) {
         console.error('❌ Multi-Agent Error:', error);
-        
+
         // Fallback: return popular books
         const popularBooks = await getPopularBooks(5);
-        
+
         return {
             success: false,
             message: "I found some popular books you might enjoy!",
@@ -586,16 +632,16 @@ router.post('/chat', auth, async (req, res) => {
     try {
         const { message } = req.body;
         const userId = req.user?.id;
-        
+
         if (!message || message.trim().length < 2) {
             return res.status(400).json({
                 message: 'Please provide a more detailed query'
             });
         }
-        
+
         const result = await runMultiAgentRecommendation(message, userId);
         res.json(result);
-        
+
     } catch (err) {
         console.error('❌ Chat Error:', err);
         res.status(500).json({
@@ -613,13 +659,13 @@ router.post('/chat', auth, async (req, res) => {
 router.get('/test', async (req, res) => {
     try {
         const testQuery = req.query.q || 'I want a philosophy book under 300 rupees';
-        
+
         console.log('\n🧪 TEST MODE');
         console.log(`   Query: "${testQuery}"`);
-        
+
         const result = await runMultiAgentRecommendation(testQuery, null);
         res.json(result);
-        
+
     } catch (err) {
         res.status(500).json({
             status: 'error',
@@ -636,9 +682,9 @@ router.get('/personalized', auth, async (req, res) => {
     try {
         const userId = req.user.id;
         const query = "Recommend books based on my reading preferences and purchase history";
-        
+
         const result = await runMultiAgentRecommendation(query, userId);
-        
+
         res.json({
             type: 'personalized',
             title: 'Recommended For You',
@@ -646,10 +692,10 @@ router.get('/personalized', auth, async (req, res) => {
             aiMessage: result.message,
             insights: result.agentInsights
         });
-        
+
     } catch (err) {
         console.error('Personalized recommendations error:', err);
-        
+
         // Fallback to popular
         const popular = await getPopularBooks(5);
         res.json({
