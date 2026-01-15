@@ -1,124 +1,162 @@
 // backend/routes/recommendations.js
-// AI-Based Recommendation System with Multi-Agent Architecture
+// TRUE MULTI-AGENT AI RECOMMENDATION SYSTEM
+// Features: 5 Specialized Agents + Coordinator Agent
+// Uses: Groq API (FREE) with Llama 3.3 70B
 
 const router = require('express').Router();
 const pool = require('../config/database');
 const auth = require('../middleware/auth');
 const https = require('https');
 
-// HuggingFace API Configuration
-const HF_API_TOKEN = process.env.HUGGINGFACE_API_TOKEN;
-const HF_API_URL = 'https://api-inference.huggingface.co/models/facebook/bart-large-mnli';
-
-// Agent Weights (as per requirements)
-const WEIGHTS = {
-    genre: 0.40,
-    mood: 0.25,
-    length: 0.25,
-    history: 0.10
-};
-
-// Genre categories for classification with keywords for fallback
-const GENRE_LABELS = [
-    'fiction', 'non-fiction', 'mystery', 'thriller', 'romance',
-    'science fiction', 'fantasy', 'horror', 'biography', 'history',
-    'self-help', 'business', 'economics', 'science', 'technology',
-    'philosophy', 'psychology', 'education', 'travel', 'cooking',
-    'art', 'music', 'sports', 'religion', 'politics', 'health'
-];
-
-// Genre keyword mapping for fallback detection
-const GENRE_KEYWORDS = {
-    'fiction': ['fiction', 'novel', 'story', 'stories', 'tale'],
-    'non-fiction': ['non-fiction', 'nonfiction', 'real', 'true story', 'factual'],
-    'mystery': ['mystery', 'detective', 'whodunit', 'crime', 'clues'],
-    'thriller': ['thriller', 'suspense', 'action', 'spy', 'chase'],
-    'romance': ['romance', 'love', 'romantic', 'relationship', 'dating'],
-    'science fiction': ['sci-fi', 'science fiction', 'space', 'future', 'alien', 'robot'],
-    'fantasy': ['fantasy', 'magic', 'wizard', 'dragon', 'mythical', 'supernatural'],
-    'horror': ['horror', 'scary', 'ghost', 'haunted', 'creepy', 'terrifying'],
-    'biography': ['biography', 'life story', 'memoir', 'autobiography'],
-    'history': ['history', 'historical', 'ancient', 'war', 'civilization'],
-    'self-help': ['self-help', 'self help', 'improvement', 'personal development', 'growth'],
-    'business': ['business', 'startup', 'entrepreneur', 'company', 'corporate'],
-    'economics': ['economics', 'economy', 'finance', 'money', 'market'],
-    'science': ['science', 'scientific', 'physics', 'chemistry', 'biology'],
-    'technology': ['technology', 'tech', 'computer', 'programming', 'coding', 'software'],
-    'philosophy': ['philosophy', 'philosophical', 'thinking', 'wisdom', 'existential', 'stoic'],
-    'psychology': ['psychology', 'mind', 'mental', 'behavior', 'cognitive'],
-    'education': ['education', 'learning', 'study', 'academic', 'textbook'],
-    'travel': ['travel', 'journey', 'adventure', 'explore', 'destination'],
-    'cooking': ['cooking', 'recipe', 'food', 'cuisine', 'chef'],
-    'art': ['art', 'artistic', 'painting', 'creative', 'design'],
-    'music': ['music', 'musical', 'song', 'instrument', 'melody'],
-    'sports': ['sports', 'athletic', 'fitness', 'game', 'player'],
-    'religion': ['religion', 'religious', 'spiritual', 'faith', 'god'],
-    'politics': ['politics', 'political', 'government', 'democracy', 'election'],
-    'health': ['health', 'healthy', 'wellness', 'medical', 'fitness', 'diet']
-};
-
-// Mood/Feel categories
-const MOOD_LABELS = [
-    'exciting', 'thrilling', 'relaxing', 'inspiring', 'thought-provoking',
-    'funny', 'emotional', 'dark', 'uplifting', 'adventurous',
-    'romantic', 'mysterious', 'educational', 'motivational', 'peaceful'
-];
-
-// Mood keyword mapping for fallback
-const MOOD_KEYWORDS = {
-    'exciting': ['exciting', 'excitement', 'thrill', 'adrenaline', 'action-packed'],
-    'thrilling': ['thrilling', 'suspenseful', 'tense', 'gripping', 'edge-of-seat'],
-    'relaxing': ['relaxing', 'calm', 'peaceful', 'easy', 'light read', 'chill'],
-    'inspiring': ['inspiring', 'inspiration', 'motivate', 'uplifting', 'encourage'],
-    'thought-provoking': ['thought-provoking', 'think', 'deep', 'intellectual', 'philosophical'],
-    'funny': ['funny', 'humor', 'comedy', 'hilarious', 'laugh', 'witty', 'comic'],
-    'emotional': ['emotional', 'touching', 'heartfelt', 'moving', 'tearjerker', 'sad'],
-    'dark': ['dark', 'grim', 'bleak', 'disturbing', 'twisted', 'noir'],
-    'uplifting': ['uplifting', 'happy', 'joyful', 'positive', 'feel-good', 'heartwarming'],
-    'adventurous': ['adventure', 'adventurous', 'journey', 'quest', 'exploration'],
-    'romantic': ['romantic', 'love story', 'passionate', 'sweet', 'heartwarming'],
-    'mysterious': ['mysterious', 'mystery', 'enigmatic', 'puzzling', 'intriguing'],
-    'educational': ['educational', 'informative', 'learn', 'knowledge', 'insightful'],
-    'motivational': ['motivational', 'motivate', 'inspire', 'success', 'achieve'],
-    'peaceful': ['peaceful', 'serene', 'tranquil', 'meditative', 'zen']
-};
-
-// Length categories
-const LENGTH_LABELS = ['short book', 'medium length book', 'long book'];
-
-// Length keyword mapping for fallback
-const LENGTH_KEYWORDS = {
-    'short book': ['short', 'quick', 'brief', 'less than 100', 'less than 150', 'under 100', 'under 150', 'small', 'compact', 'few pages'],
-    'medium length book': ['medium', 'moderate', 'average', 'normal length'],
-    'long book': ['long', 'lengthy', 'detailed', 'comprehensive', 'epic', 'over 300', 'over 400', 'thick']
-};
-
 // ============================================
-// HUGGINGFACE ZERO-SHOT CLASSIFICATION
+// GROQ API CONFIGURATION (FREE!)
 // ============================================
 
-async function zeroShotClassify(text, labels) {
-    // Check if API token is available
-    if (!HF_API_TOKEN) {
-        console.log('⚠️ HuggingFace API token not configured, using fallback');
-        return null;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = 'api.groq.com';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+// Check if API key is configured
+if (!GROQ_API_KEY) {
+    console.warn('⚠️ GROQ_API_KEY not set in environment variables');
+}
+
+// ============================================
+// AGENT DEFINITIONS - Each agent is specialized
+// ============================================
+
+const AGENTS = {
+    INTENT: {
+        name: '🎯 Intent Agent',
+        role: 'Parse and understand user query',
+        systemPrompt: `You are the Intent Analysis Agent. Your ONLY job is to extract structured information from user queries about books.
+
+Analyze the query and extract:
+1. genre: The book category (fiction, mystery, thriller, romance, sci-fi, fantasy, horror, biography, history, self-help, business, philosophy, psychology, etc.) - null if not mentioned
+2. mood: The emotional feel (exciting, relaxing, inspiring, thought-provoking, funny, emotional, dark, uplifting, romantic, mysterious) - null if not mentioned
+3. length_preference: short/medium/long - null if not mentioned
+4. max_budget: number in rupees - null if not mentioned
+5. keywords: array of important words from the query
+6. user_emotion: detected emotional state (stressed, sad, happy, bored, curious) - null if not clear
+
+RESPOND ONLY WITH VALID JSON, no other text:
+{"genre": "...", "mood": "...", "length_preference": "...", "max_budget": null, "keywords": [], "user_emotion": null}`
+    },
+
+    HISTORY: {
+        name: '📚 History Agent',
+        role: 'Analyze user purchase patterns',
+        systemPrompt: `You are the User History Analysis Agent. Your job is to analyze a user's purchase history and identify patterns.
+
+Given purchase history data, identify:
+1. favorite_genres: top genres the user buys
+2. preferred_authors: authors they return to
+3. price_range: typical spending (budget/mid-range/premium)
+4. reading_pattern: type of reader they are
+5. recommendation_strategy: how to approach recommendations for this user
+
+RESPOND ONLY WITH VALID JSON:
+{"favorite_genres": [], "preferred_authors": [], "price_range": "...", "reading_pattern": "...", "recommendation_strategy": "..."}`
+    },
+
+    MOOD: {
+        name: '💭 Mood Expert Agent',
+        role: 'Map emotions to book characteristics',
+        systemPrompt: `You are the Mood Expert Agent. You understand the emotional and psychological aspects of reading.
+
+Given a user's mood/emotion and what they're looking for, determine:
+1. book_characteristics: what kind of books would help (e.g., "light, humorous, easy to read")
+2. avoid_characteristics: what to avoid (e.g., "heavy themes, dark endings")
+3. search_keywords: keywords to find matching books
+4. page_count_suggestion: ideal page count range
+5. reasoning: brief explanation of your mood analysis
+
+RESPOND ONLY WITH VALID JSON:
+{"book_characteristics": "...", "avoid_characteristics": "...", "search_keywords": [], "page_count_suggestion": {"min": 0, "max": 500}, "reasoning": "..."}`
+    },
+
+    SEARCH: {
+        name: '🔍 Search Agent',
+        role: 'Find matching books from database',
+        systemPrompt: `You are the Search Strategy Agent. Given search criteria, you determine the best search approach.
+
+Analyze the criteria and output:
+1. primary_search: main search method (by_category, by_keywords, by_author, by_popularity)
+2. search_terms: specific terms to search
+3. filters: price, page count, stock filters
+4. fallback_strategy: what to do if primary search fails
+5. limit: how many books to fetch
+
+RESPOND ONLY WITH VALID JSON:
+{"primary_search": "...", "search_terms": [], "filters": {}, "fallback_strategy": "...", "limit": 20}`
+    },
+
+    RANKING: {
+        name: '📊 Ranking Agent',
+        role: 'Score and rank book matches',
+        systemPrompt: `You are the Ranking Agent. You score books based on how well they match user preferences.
+
+Given books and user preferences, for each book calculate:
+1. relevance_score: 0-100 based on genre/keyword match
+2. mood_score: 0-100 based on mood/emotional fit
+3. value_score: 0-100 based on price vs quality
+4. personalization_score: 0-100 based on user history match
+5. final_score: weighted combination
+6. recommendation_reason: why this book is recommended
+
+Output top 5 books with scores.
+
+RESPOND ONLY WITH VALID JSON:
+{"ranked_books": [{"book_id": 1, "final_score": 85, "scores": {...}, "reason": "..."}]}`
+    },
+
+    COORDINATOR: {
+        name: '🤖 Coordinator Agent',
+        role: 'Orchestrate all agents and generate response',
+        systemPrompt: `You are the Coordinator Agent. You synthesize outputs from all specialized agents into a final recommendation.
+
+Given all agent outputs, create:
+1. message: A friendly, personalized message explaining the recommendations (2-3 sentences)
+2. summary: Brief summary of how you reached these recommendations
+3. confidence: Your confidence level (high/medium/low)
+
+Be conversational and explain WHY these books match what the user asked for.
+
+RESPOND ONLY WITH VALID JSON:
+{"message": "...", "summary": "...", "confidence": "..."}`
     }
+};
 
+// ============================================
+// GROQ API CALL FUNCTION
+// ============================================
+
+async function callGroqAgent(agentType, userMessage, context = '') {
+    const agent = AGENTS[agentType];
+    
+    console.log(`\n${'─'.repeat(50)}`);
+    console.log(`${agent.name} starting...`);
+    console.log(`   Role: ${agent.role}`);
+    
     return new Promise((resolve, reject) => {
-        const data = JSON.stringify({
-            inputs: text,
-            parameters: { candidate_labels: labels }
+        const requestBody = JSON.stringify({
+            model: GROQ_MODEL,
+            messages: [
+                { role: 'system', content: agent.systemPrompt },
+                { role: 'user', content: context ? `${context}\n\nUser Query: ${userMessage}` : userMessage }
+            ],
+            temperature: 0.3,
+            max_tokens: 1024
         });
 
-        const url = new URL(HF_API_URL);
         const options = {
-            hostname: url.hostname,
-            path: url.pathname,
+            hostname: GROQ_API_URL,
+            path: '/openai/v1/chat/completions',
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${HF_API_TOKEN}`,
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Length': Buffer.byteLength(requestBody)
             }
         };
 
@@ -128,510 +166,112 @@ async function zeroShotClassify(text, labels) {
             res.on('end', () => {
                 try {
                     const result = JSON.parse(body);
+                    
                     if (result.error) {
-                        console.error('HuggingFace API error:', result.error);
-                        resolve(null);
-                    } else if (result.labels && result.scores) {
-                        console.log('✅ HuggingFace API success');
-                        resolve(result);
-                    } else {
-                        console.log('⚠️ Unexpected API response:', result);
-                        resolve(null);
+                        console.log(`   ❌ Error: ${result.error.message}`);
+                        reject(new Error(result.error.message));
+                        return;
+                    }
+                    
+                    const content = result.choices[0]?.message?.content || '';
+                    console.log(`   ✅ Response received`);
+                    
+                    // Try to parse JSON from response
+                    try {
+                        // Extract JSON from response (handle markdown code blocks)
+                        let jsonStr = content;
+                        if (content.includes('```json')) {
+                            jsonStr = content.split('```json')[1].split('```')[0].trim();
+                        } else if (content.includes('```')) {
+                            jsonStr = content.split('```')[1].split('```')[0].trim();
+                        }
+                        
+                        const parsed = JSON.parse(jsonStr);
+                        console.log(`   📤 Parsed output:`, JSON.stringify(parsed).substring(0, 100) + '...');
+                        resolve(parsed);
+                    } catch (parseErr) {
+                        console.log(`   ⚠️ Could not parse JSON, returning raw`);
+                        resolve({ raw: content });
                     }
                 } catch (e) {
-                    console.error('Parse error:', e);
-                    resolve(null);
+                    console.log(`   ❌ Parse error:`, e.message);
+                    reject(e);
                 }
             });
         });
 
         req.on('error', (e) => {
-            console.error('Request error:', e);
-            resolve(null);
+            console.log(`   ❌ Request error:`, e.message);
+            reject(e);
         });
 
-        req.setTimeout(15000, () => {
-            console.log('⚠️ HuggingFace API timeout');
+        req.setTimeout(30000, () => {
+            console.log(`   ⚠️ Timeout`);
             req.destroy();
-            resolve(null);
+            reject(new Error('Request timeout'));
         });
 
-        req.write(data);
+        req.write(requestBody);
         req.end();
     });
 }
 
 // ============================================
-// FALLBACK KEYWORD-BASED CLASSIFICATION
+// DATABASE QUERY FUNCTIONS
 // ============================================
 
-function keywordClassify(text, keywordMap) {
-    const lowerText = text.toLowerCase();
-    let bestMatch = null;
-    let bestScore = 0;
-    let matchCount = 0;
-
-    for (const [label, keywords] of Object.entries(keywordMap)) {
-        let score = 0;
-        let matches = 0;
-
-        for (const keyword of keywords) {
-            if (lowerText.includes(keyword.toLowerCase())) {
-                // Exact word match gets higher score
-                const wordRegex = new RegExp(`\\b${keyword}\\b`, 'i');
-                if (wordRegex.test(lowerText)) {
-                    score += 1.0;
-                } else {
-                    score += 0.5;
-                }
-                matches++;
-            }
-        }
-
-        // Normalize by keyword count to get confidence
-        const confidence = matches > 0 ? Math.min(0.95, score / keywords.length + (matches * 0.1)) : 0;
-
-        if (confidence > bestScore) {
-            bestScore = confidence;
-            bestMatch = label;
-            matchCount = matches;
-        }
-    }
-
-    if (bestMatch && bestScore > 0.1) {
-        return {
-            labels: [bestMatch],
-            scores: [bestScore],
-            method: 'keyword'
-        };
-    }
-    return null;
-}
-
-// ============================================
-// INTENT AGENT - Extracts user intent
-// ============================================
-
-async function intentAgent(userQuery) {
-    console.log('🤖 Intent Agent: Processing query:', userQuery);
-
-    const intent = {
-        genre: null,
-        genreScore: 0,
-        mood: null,
-        moodScore: 0,
-        length: null,
-        lengthScore: 0,
-        budget: null,
-        raw: userQuery,
-        method: 'none'
-    };
-
-    // Extract budget from query using simple pattern (allowed for numbers)
-    const budgetMatch = userQuery.match(/(?:under|below|less than|within|budget|₹|rs\.?|rupees?)\s*(\d+)/i);
-    if (budgetMatch) {
-        intent.budget = parseInt(budgetMatch[1]);
-        console.log(`   💰 Budget detected: ₹${intent.budget}`);
-    }
-
-    // Try HuggingFace API first, fall back to keyword matching
-    let genreResult = await zeroShotClassify(userQuery, GENRE_LABELS);
-    let moodResult = await zeroShotClassify(userQuery, MOOD_LABELS);
-    let lengthResult = await zeroShotClassify(userQuery, LENGTH_LABELS);
-
-    // If API failed, use keyword fallback
-    if (!genreResult) {
-        console.log('   📝 Using keyword fallback for genre');
-        genreResult = keywordClassify(userQuery, GENRE_KEYWORDS);
-    }
-    if (!moodResult) {
-        console.log('   📝 Using keyword fallback for mood');
-        moodResult = keywordClassify(userQuery, MOOD_KEYWORDS);
-    }
-    if (!lengthResult) {
-        console.log('   📝 Using keyword fallback for length');
-        lengthResult = keywordClassify(userQuery, LENGTH_KEYWORDS);
-    }
-
-    // Process genre result
-    if (genreResult && genreResult.labels && genreResult.scores) {
-        intent.genre = genreResult.labels[0];
-        intent.genreScore = genreResult.scores[0];
-        intent.method = genreResult.method || 'api';
-        console.log(`   🎭 Genre detected: ${intent.genre} (${(intent.genreScore * 100).toFixed(1)}%) [${genreResult.method || 'api'}]`);
-    }
-
-    // Process mood result
-    if (moodResult && moodResult.labels && moodResult.scores) {
-        intent.mood = moodResult.labels[0];
-        intent.moodScore = moodResult.scores[0];
-        console.log(`   💫 Mood detected: ${intent.mood} (${(intent.moodScore * 100).toFixed(1)}%) [${moodResult.method || 'api'}]`);
-    }
-
-    // Process length result
-    if (lengthResult && lengthResult.labels && lengthResult.scores) {
-        intent.length = lengthResult.labels[0];
-        intent.lengthScore = lengthResult.scores[0];
-        console.log(`   📄 Length detected: ${intent.length} (${(intent.lengthScore * 100).toFixed(1)}%) [${lengthResult.method || 'api'}]`);
-    }
-
-    // If still no intent detected, try broader keyword search
-    if (!intent.genre && !intent.mood && !intent.length) {
-        console.log('   🔍 No specific intent found, trying broader search...');
-        // Check for any book-related keywords
-        const lowerQuery = userQuery.toLowerCase();
-
-        // Common genre-related words that might not be exact matches
-        if (lowerQuery.includes('scary') || lowerQuery.includes('spooky')) {
-            intent.genre = 'horror';
-            intent.genreScore = 0.7;
-        } else if (lowerQuery.includes('love') || lowerQuery.includes('romantic')) {
-            intent.genre = 'romance';
-            intent.genreScore = 0.7;
-        } else if (lowerQuery.includes('learn') || lowerQuery.includes('study')) {
-            intent.genre = 'education';
-            intent.genreScore = 0.6;
-        } else if (lowerQuery.includes('money') || lowerQuery.includes('invest')) {
-            intent.genre = 'business';
-            intent.genreScore = 0.6;
-        } else if (lowerQuery.includes('life') || lowerQuery.includes('success')) {
-            intent.genre = 'self-help';
-            intent.genreScore = 0.5;
-        }
-    }
-
-    console.log('   ✅ Intent extraction complete:', {
-        genre: intent.genre,
-        mood: intent.mood,
-        length: intent.length,
-        budget: intent.budget
-    });
-
-    return intent;
-}
-
-// ============================================
-// GENRE AGENT - Scores books by genre match
-// ============================================
-
-function genreAgent(book, intent) {
-    if (!intent.genre) return 0.5; // Neutral if no genre intent
-
-    const bookCategory = (book.category || '').toLowerCase();
-    const bookDescription = (book.description || '').toLowerCase();
-    const bookTitle = (book.title || '').toLowerCase();
-    const intentGenre = intent.genre.toLowerCase();
-
-    // Direct category match
-    if (bookCategory.includes(intentGenre) || bookCategory === intentGenre) {
-        return 1.0;
-    }
-
-    // Check if genre appears in title
-    if (bookTitle.includes(intentGenre)) {
-        return 0.9;
-    }
-
-    // Check if genre appears in description
-    if (bookDescription.includes(intentGenre)) {
-        return 0.8;
-    }
-
-    // Partial matches for related genres
-    const genreRelations = {
-        'thriller': ['mystery', 'suspense', 'crime', 'action', 'spy'],
-        'mystery': ['thriller', 'detective', 'crime', 'suspense'],
-        'romance': ['love', 'relationship', 'romantic', 'dating'],
-        'science fiction': ['sci-fi', 'space', 'future', 'technology', 'science'],
-        'fantasy': ['magic', 'mythical', 'supernatural', 'wizard', 'dragon'],
-        'horror': ['scary', 'dark', 'supernatural', 'ghost', 'creepy', 'terror'],
-        'self-help': ['personal development', 'motivation', 'success', 'improvement', 'growth'],
-        'business': ['economics', 'finance', 'management', 'entrepreneurship', 'startup', 'money'],
-        'biography': ['memoir', 'autobiography', 'life story', 'history'],
-        'philosophy': ['philosophical', 'thinking', 'wisdom', 'stoic', 'existential'],
-        'psychology': ['mind', 'mental', 'behavior', 'cognitive', 'emotional'],
-        'fiction': ['novel', 'story', 'literature', 'narrative'],
-        'non-fiction': ['factual', 'real', 'true', 'informative'],
-        'history': ['historical', 'ancient', 'war', 'civilization'],
-        'education': ['learning', 'academic', 'study', 'textbook', 'guide']
-    };
-
-    const related = genreRelations[intentGenre] || [];
-    for (const rel of related) {
-        if (bookCategory.includes(rel) || bookDescription.includes(rel) || bookTitle.includes(rel)) {
-            return 0.7;
-        }
-    }
-
-    // Check if any GENRE_KEYWORDS match
-    const keywords = GENRE_KEYWORDS[intentGenre] || [];
-    for (const keyword of keywords) {
-        if (bookDescription.includes(keyword) || bookTitle.includes(keyword)) {
-            return 0.65;
-        }
-    }
-
-    // No match - return low but not zero
-    return 0.3;
-}
-
-// ============================================
-// MOOD AGENT - Scores books by emotional tone
-// ============================================
-
-function moodAgent(book, intent) {
-    if (!intent.mood) return 0.5; // Neutral if no mood intent
-
-    const bookDescription = (book.description || '').toLowerCase();
-    const bookTitle = (book.title || '').toLowerCase();
-    const intentMood = intent.mood.toLowerCase();
-
-    // Mood keywords mapping
-    const moodKeywords = {
-        'exciting': ['action', 'adventure', 'thrill', 'fast-paced', 'exciting', 'adrenaline'],
-        'thrilling': ['suspense', 'tension', 'mystery', 'edge', 'gripping', 'intense'],
-        'relaxing': ['calm', 'peaceful', 'gentle', 'soothing', 'light', 'easy'],
-        'inspiring': ['inspire', 'motivation', 'success', 'overcome', 'achieve', 'dream'],
-        'thought-provoking': ['think', 'philosophical', 'deep', 'question', 'profound', 'intellectual'],
-        'funny': ['humor', 'comedy', 'laugh', 'funny', 'witty', 'hilarious', 'comic'],
-        'emotional': ['emotional', 'touching', 'heart', 'moving', 'tears', 'feelings'],
-        'dark': ['dark', 'grim', 'bleak', 'twisted', 'sinister', 'noir'],
-        'uplifting': ['hope', 'positive', 'uplifting', 'joy', 'happy', 'heartwarming'],
-        'adventurous': ['adventure', 'journey', 'explore', 'quest', 'discover', 'travel'],
-        'romantic': ['love', 'romance', 'passion', 'heart', 'relationship', 'sweet'],
-        'mysterious': ['mystery', 'secret', 'hidden', 'unknown', 'enigma', 'puzzle'],
-        'educational': ['learn', 'knowledge', 'understand', 'teach', 'inform', 'guide'],
-        'motivational': ['motivate', 'inspire', 'success', 'achieve', 'goal', 'growth'],
-        'peaceful': ['peace', 'calm', 'serene', 'tranquil', 'quiet', 'meditative']
-    };
-
-    const keywords = moodKeywords[intentMood] || [intentMood];
-    let matchCount = 0;
-    let totalKeywords = keywords.length;
-
-    for (const keyword of keywords) {
-        if (bookDescription.includes(keyword) || bookTitle.includes(keyword)) {
-            matchCount++;
-        }
-    }
-
-    // More generous scoring
-    if (matchCount >= 3) return 1.0;
-    if (matchCount >= 2) return 0.85;
-    if (matchCount >= 1) return 0.7;
-
-    // Check for partial mood match based on category
-    const categoryMoodMap = {
-        'horror': ['dark', 'thrilling', 'mysterious'],
-        'romance': ['romantic', 'emotional', 'uplifting'],
-        'thriller': ['exciting', 'thrilling', 'mysterious'],
-        'self-help': ['inspiring', 'motivational', 'uplifting'],
-        'comedy': ['funny', 'uplifting'],
-        'philosophy': ['thought-provoking', 'educational'],
-        'adventure': ['exciting', 'adventurous']
-    };
-
-    const bookCategory = (book.category || '').toLowerCase();
-    for (const [cat, moods] of Object.entries(categoryMoodMap)) {
-        if (bookCategory.includes(cat) && moods.includes(intentMood)) {
-            return 0.65;
-        }
-    }
-
-    return 0.4;
-}
-
-// ============================================
-// LENGTH AGENT - Scores books by page count
-// ============================================
-
-function lengthAgent(book, intent) {
-    if (!intent.length) return 0.5; // Neutral if no length intent
-
-    const pageCount = book.page_count || 0;
-
-    // If no page count, return neutral
-    if (!pageCount) return 0.5;
-
-    // Define length categories
-    const isShort = pageCount <= 150;
-    const isMedium = pageCount > 150 && pageCount <= 350;
-    const isLong = pageCount > 350;
-
-    const wantsShort = intent.length.includes('short');
-    const wantsMedium = intent.length.includes('medium');
-    const wantsLong = intent.length.includes('long');
-
-    // Exact match
-    if ((wantsShort && isShort) || (wantsMedium && isMedium) || (wantsLong && isLong)) {
-        return 1.0;
-    }
-
-    // One category off
-    if ((wantsShort && isMedium) || (wantsMedium && (isShort || isLong)) || (wantsLong && isMedium)) {
-        return 0.6;
-    }
-
-    // Opposite ends
-    return 0.3;
-}
-
-// ============================================
-// HISTORY AGENT - Scores based on user history
-// ============================================
-
-async function historyAgent(book, userId) {
-    if (!userId) return 0.5; // No boost for anonymous users
-
-    try {
-        // Get user's past purchases
-        const [purchases] = await pool.query(`
-            SELECT DISTINCT b.category, b.author
-            FROM orders o
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN books b ON oi.book_id = b.id
-            WHERE o.user_id = ? AND o.payment_status = 'completed'
-        `, [userId]);
-
-        let score = 0.5; // Start neutral
-
-        // Boost if book matches past purchase categories
-        for (const purchase of purchases) {
-            if (purchase.category && book.category &&
-                purchase.category.toLowerCase() === book.category.toLowerCase()) {
-                score += 0.2;
-            }
-            if (purchase.author && book.author &&
-                purchase.author.toLowerCase() === book.author.toLowerCase()) {
-                score += 0.15;
-            }
-        }
-
-        // Try to get search history (table may not exist)
-        try {
-            const [searches] = await pool.query(`
-                SELECT detected_genre, detected_mood
-                FROM user_search_history
-                WHERE user_id = ?
-                ORDER BY created_at DESC
-                LIMIT 10
-            `, [userId]);
-
-            // Small boost from search history
-            for (const search of searches) {
-                if (search.detected_genre && book.category &&
-                    book.category.toLowerCase().includes(search.detected_genre.toLowerCase())) {
-                    score += 0.05;
-                }
-            }
-        } catch (searchErr) {
-            // Search history table doesn't exist, that's ok
-        }
-
-        // Cap at 1.0
-        return Math.min(1.0, score);
-    } catch (err) {
-        console.error('History agent error:', err.message);
-        return 0.5;
-    }
-}
-
-// ============================================
-// RECOMMENDATION AGENT - Orchestrates all agents
-// ============================================
-
-async function recommendationAgent(userQuery, userId) {
-    console.log('\n🎯 Recommendation Agent: Starting...');
-    console.log(`   Query: "${userQuery}"`);
-    console.log(`   User ID: ${userId || 'anonymous'}`);
-
-    // Step 1: Extract intent using Intent Agent
-    const intent = await intentAgent(userQuery);
-
-    // Check if we have ANY intent
-    const hasIntent = intent.genre || intent.mood || intent.length || intent.budget;
-
-    if (!hasIntent) {
-        console.log('   ⚠️ No clear intent detected, returning popular books');
-        const popular = await getPopularBooks();
-        // Give popular books a default score
-        const scoredPopular = popular.map(book => ({
-            ...book,
-            scores: {
-                genre: 0.5,
-                mood: 0.5,
-                length: 0.5,
-                history: 0.5,
-                final: 0.5
-            }
-        }));
-        return { intent, recommendations: scoredPopular };
-    }
-
-    // Step 2: Get all books from database
+async function searchBooksByCategory(category, limit = 20) {
     const [books] = await pool.query(`
-        SELECT id, title, author, description, price, stock, 
-               page_count, category, image_url
+        SELECT id, title, author, category, price, stock, page_count, 
+               description, image_url, created_at
         FROM books 
-        WHERE stock > 0
-    `);
-
-    console.log(`   📚 Found ${books.length} books to score`);
-
-    // Step 3: Score each book using all sub-agents
-    const scoredBooks = [];
-
-    for (const book of books) {
-        // Budget filter (hard filter, not scored)
-        if (intent.budget && book.price > intent.budget) {
-            continue;
-        }
-
-        // Get scores from each agent
-        const genreScore = genreAgent(book, intent);
-        const moodScore = moodAgent(book, intent);
-        const lengthScore = lengthAgent(book, intent);
-        const historyScore = await historyAgent(book, userId);
-
-        // Calculate weighted final score
-        const finalScore =
-            (genreScore * WEIGHTS.genre) +
-            (moodScore * WEIGHTS.mood) +
-            (lengthScore * WEIGHTS.length) +
-            (historyScore * WEIGHTS.history);
-
-        scoredBooks.push({
-            ...book,
-            scores: {
-                genre: Math.round(genreScore * 100) / 100,
-                mood: Math.round(moodScore * 100) / 100,
-                length: Math.round(lengthScore * 100) / 100,
-                history: Math.round(historyScore * 100) / 100,
-                final: Math.round(finalScore * 100) / 100
-            }
-        });
-    }
-
-    console.log(`   ✅ Scored ${scoredBooks.length} books (after budget filter)`);
-
-    // Step 4: Sort by final score (descending)
-    scoredBooks.sort((a, b) => b.scores.final - a.scores.final);
-
-    // Step 5: Return top 5 recommendations
-    const recommendations = scoredBooks.slice(0, 5);
-
-    console.log('   🏆 Top recommendations:');
-    recommendations.forEach((book, i) => {
-        console.log(`   ${i + 1}. "${book.title}" by ${book.author}`);
-        console.log(`      Genre: ${book.scores.genre}, Mood: ${book.scores.mood}, Length: ${book.scores.length}, History: ${book.scores.history}`);
-        console.log(`      Final Score: ${(book.scores.final * 100).toFixed(0)}%`);
-    });
-
-    return { intent, recommendations };
+        WHERE LOWER(category) LIKE LOWER(?) AND stock > 0
+        ORDER BY created_at DESC
+        LIMIT ?
+    `, [`%${category}%`, limit]);
+    return books;
 }
 
-// Helper: Get popular books when no intent
-async function getPopularBooks() {
+async function searchBooksByKeywords(keywords, limit = 20) {
+    if (!keywords || keywords.length === 0) return [];
+    
+    const conditions = keywords.map(() => 
+        '(LOWER(title) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?) OR LOWER(author) LIKE LOWER(?) OR LOWER(category) LIKE LOWER(?))'
+    ).join(' OR ');
+    
+    const params = keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`, `%${kw}%`, `%${kw}%`]);
+    params.push(limit);
+    
+    const [books] = await pool.query(`
+        SELECT id, title, author, category, price, stock, page_count, 
+               description, image_url, created_at
+        FROM books 
+        WHERE stock > 0 AND (${conditions})
+        ORDER BY created_at DESC
+        LIMIT ?
+    `, params);
+    return books;
+}
+
+async function getUserPurchaseHistory(userId) {
+    if (!userId) return null;
+    
+    const [purchases] = await pool.query(`
+        SELECT DISTINCT 
+            b.id, b.title, b.author, b.category, b.price, b.page_count,
+            o.created_at as purchase_date
+        FROM orders o
+        JOIN order_items oi ON o.id = oi.order_id
+        JOIN books b ON oi.book_id = b.id
+        WHERE o.user_id = ? AND o.payment_status = 'completed'
+        ORDER BY o.created_at DESC
+        LIMIT 20
+    `, [userId]);
+    
+    return purchases;
+}
+
+async function getPopularBooks(limit = 10) {
     const [books] = await pool.query(`
         SELECT b.*, COUNT(oi.id) as order_count
         FROM books b
@@ -639,20 +279,299 @@ async function getPopularBooks() {
         WHERE b.stock > 0
         GROUP BY b.id
         ORDER BY order_count DESC, b.created_at DESC
-        LIMIT 5
-    `);
+        LIMIT ?
+    `, [limit]);
+    return books;
+}
 
-    // Add default scores for popular books
-    return books.map(book => ({
-        ...book,
-        scores: {
-            genre: 0.5,
-            mood: 0.5,
-            length: 0.5,
-            history: 0.5,
-            final: 0.5
+async function filterBooks(books, filters) {
+    let filtered = [...books];
+    
+    if (filters.max_price) {
+        filtered = filtered.filter(b => b.price <= filters.max_price);
+    }
+    if (filters.min_pages) {
+        filtered = filtered.filter(b => (b.page_count || 200) >= filters.min_pages);
+    }
+    if (filters.max_pages) {
+        filtered = filtered.filter(b => (b.page_count || 200) <= filters.max_pages);
+    }
+    
+    return filtered;
+}
+
+// ============================================
+// MULTI-AGENT ORCHESTRATION
+// ============================================
+
+async function runMultiAgentRecommendation(userQuery, userId) {
+    console.log('\n' + '═'.repeat(60));
+    console.log('🚀 MULTI-AGENT RECOMMENDATION SYSTEM');
+    console.log('═'.repeat(60));
+    console.log(`📝 Query: "${userQuery}"`);
+    console.log(`👤 User ID: ${userId || 'anonymous'}`);
+    console.log('═'.repeat(60));
+    
+    const agentOutputs = {};
+    const startTime = Date.now();
+    
+    try {
+        // ========== AGENT 1: Intent Analysis ==========
+        console.log('\n🎯 PHASE 1: Intent Analysis');
+        const intentResult = await callGroqAgent('INTENT', userQuery);
+        agentOutputs.intent = intentResult;
+        
+        // ========== AGENT 2: User History Analysis ==========
+        console.log('\n📚 PHASE 2: User History Analysis');
+        const purchaseHistory = await getUserPurchaseHistory(userId);
+        
+        if (purchaseHistory && purchaseHistory.length > 0) {
+            const historyContext = `User's purchase history:\n${purchaseHistory.map(p => 
+                `- "${p.title}" by ${p.author} (${p.category}, ₹${p.price})`
+            ).join('\n')}`;
+            
+            const historyResult = await callGroqAgent('HISTORY', userQuery, historyContext);
+            agentOutputs.history = historyResult;
+        } else {
+            console.log('   ℹ️ No purchase history found - skipping personalization');
+            agentOutputs.history = { 
+                favorite_genres: [], 
+                recommendation_strategy: 'Show popular books as user is new' 
+            };
         }
-    }));
+        
+        // ========== AGENT 3: Mood Analysis ==========
+        console.log('\n💭 PHASE 3: Mood Analysis');
+        const moodContext = `Intent analysis: ${JSON.stringify(intentResult)}`;
+        const moodResult = await callGroqAgent('MOOD', userQuery, moodContext);
+        agentOutputs.mood = moodResult;
+        
+        // ========== AGENT 4: Search Strategy ==========
+        console.log('\n🔍 PHASE 4: Search Strategy');
+        const searchContext = `
+Intent: ${JSON.stringify(intentResult)}
+User History: ${JSON.stringify(agentOutputs.history)}
+Mood Analysis: ${JSON.stringify(moodResult)}`;
+        
+        const searchResult = await callGroqAgent('SEARCH', userQuery, searchContext);
+        agentOutputs.search = searchResult;
+        
+        // ========== Execute Database Search ==========
+        console.log('\n💾 PHASE 5: Database Search');
+        let books = [];
+        
+        // Primary search based on Search Agent's strategy
+        if (intentResult.genre) {
+            console.log(`   Searching by genre: ${intentResult.genre}`);
+            books = await searchBooksByCategory(intentResult.genre, 30);
+        }
+        
+        // Keyword search if genre search found few results
+        if (books.length < 5) {
+            const keywords = [
+                ...(intentResult.keywords || []),
+                ...(moodResult.search_keywords || []),
+                ...(searchResult.search_terms || [])
+            ].filter(Boolean);
+            
+            if (keywords.length > 0) {
+                console.log(`   Searching by keywords: ${keywords.join(', ')}`);
+                const keywordBooks = await searchBooksByKeywords(keywords, 30);
+                books = [...books, ...keywordBooks];
+            }
+        }
+        
+        // Fallback to popular books
+        if (books.length < 3) {
+            console.log(`   Falling back to popular books`);
+            const popularBooks = await getPopularBooks(10);
+            books = [...books, ...popularBooks];
+        }
+        
+        // Remove duplicates
+        const uniqueBooks = [];
+        const seenIds = new Set();
+        for (const book of books) {
+            if (!seenIds.has(book.id)) {
+                seenIds.add(book.id);
+                uniqueBooks.push(book);
+            }
+        }
+        books = uniqueBooks;
+        
+        console.log(`   📚 Found ${books.length} unique books`);
+        
+        // Apply filters
+        const filters = {
+            max_price: intentResult.max_budget,
+            min_pages: moodResult.page_count_suggestion?.min,
+            max_pages: moodResult.page_count_suggestion?.max
+        };
+        
+        books = await filterBooks(books, filters);
+        console.log(`   📚 After filtering: ${books.length} books`);
+        
+        // ========== AGENT 5: Ranking ==========
+        console.log('\n📊 PHASE 6: Ranking');
+        const booksForRanking = books.slice(0, 15).map(b => ({
+            id: b.id,
+            title: b.title,
+            author: b.author,
+            category: b.category,
+            price: b.price,
+            pages: b.page_count,
+            description: (b.description || '').substring(0, 100)
+        }));
+        
+        const rankingContext = `
+User Query: "${userQuery}"
+Intent: ${JSON.stringify(intentResult)}
+Mood: ${JSON.stringify(moodResult)}
+User Preferences: ${JSON.stringify(agentOutputs.history)}
+
+Books to rank:
+${JSON.stringify(booksForRanking, null, 2)}`;
+        
+        const rankingResult = await callGroqAgent('RANKING', 
+            'Rank these books based on how well they match the user preferences',
+            rankingContext
+        );
+        agentOutputs.ranking = rankingResult;
+        
+        // ========== Get Top Ranked Books ==========
+        let finalBooks = [];
+        
+        if (rankingResult.ranked_books && rankingResult.ranked_books.length > 0) {
+            // Sort by ranking agent's scores
+            const rankedIds = rankingResult.ranked_books
+                .sort((a, b) => (b.final_score || 0) - (a.final_score || 0))
+                .slice(0, 5)
+                .map(r => r.book_id);
+            
+            // Get full book details in ranked order
+            for (const id of rankedIds) {
+                const book = books.find(b => b.id === id);
+                if (book) {
+                    const rankInfo = rankingResult.ranked_books.find(r => r.book_id === id);
+                    finalBooks.push({
+                        ...book,
+                        match_score: rankInfo?.final_score || 80,
+                        recommendation_reason: rankInfo?.reason || 'Matches your preferences'
+                    });
+                }
+            }
+        }
+        
+        // Fallback if ranking didn't work
+        if (finalBooks.length < 3) {
+            finalBooks = books.slice(0, 5).map(b => ({
+                ...b,
+                match_score: 75,
+                recommendation_reason: 'Recommended based on your query'
+            }));
+        }
+        
+        // ========== AGENT 6: Coordinator (Final Response) ==========
+        console.log('\n🤖 PHASE 7: Generating Response');
+        const coordinatorContext = `
+User Query: "${userQuery}"
+
+Agent Outputs:
+- Intent Agent found: genre="${intentResult.genre}", mood="${intentResult.mood}", budget=${intentResult.max_budget}
+- History Agent found: ${agentOutputs.history.recommendation_strategy || 'No history'}
+- Mood Expert suggests: ${moodResult.book_characteristics || 'general recommendations'}
+- Ranking Agent selected ${finalBooks.length} top books
+
+Top Recommended Books:
+${finalBooks.map((b, i) => `${i+1}. "${b.title}" by ${b.author} (₹${b.price}) - ${b.recommendation_reason}`).join('\n')}`;
+        
+        const coordinatorResult = await callGroqAgent('COORDINATOR',
+            'Generate a friendly response explaining these recommendations',
+            coordinatorContext
+        );
+        agentOutputs.coordinator = coordinatorResult;
+        
+        // ========== Final Output ==========
+        const endTime = Date.now();
+        
+        console.log('\n' + '═'.repeat(60));
+        console.log('✅ MULTI-AGENT PROCESS COMPLETE');
+        console.log(`   ⏱️ Total time: ${endTime - startTime}ms`);
+        console.log(`   📚 Books recommended: ${finalBooks.length}`);
+        console.log('═'.repeat(60) + '\n');
+        
+        return {
+            success: true,
+            message: coordinatorResult.message || "Here are your personalized recommendations!",
+            recommendations: finalBooks.map(book => ({
+                id: book.id,
+                title: book.title,
+                author: book.author,
+                price: book.price,
+                page_count: book.page_count,
+                category: book.category,
+                image_url: book.image_url,
+                description: book.description,
+                stock: book.stock,
+                match_score: book.match_score,
+                recommendation_reason: book.recommendation_reason
+            })),
+            agentInsights: {
+                intent: {
+                    agent: AGENTS.INTENT.name,
+                    detected_genre: intentResult.genre,
+                    detected_mood: intentResult.mood,
+                    budget: intentResult.max_budget,
+                    keywords: intentResult.keywords
+                },
+                history: {
+                    agent: AGENTS.HISTORY.name,
+                    favorite_genres: agentOutputs.history.favorite_genres,
+                    strategy: agentOutputs.history.recommendation_strategy
+                },
+                mood: {
+                    agent: AGENTS.MOOD.name,
+                    characteristics: moodResult.book_characteristics,
+                    reasoning: moodResult.reasoning
+                },
+                ranking: {
+                    agent: AGENTS.RANKING.name,
+                    books_evaluated: books.length,
+                    top_scores: rankingResult.ranked_books?.slice(0, 3).map(r => ({
+                        title: books.find(b => b.id === r.book_id)?.title,
+                        score: r.final_score
+                    }))
+                },
+                coordinator: {
+                    agent: AGENTS.COORDINATOR.name,
+                    confidence: coordinatorResult.confidence,
+                    summary: coordinatorResult.summary
+                }
+            },
+            debug: {
+                totalAgentCalls: 6,
+                processingTimeMs: endTime - startTime,
+                booksSearched: books.length,
+                booksRecommended: finalBooks.length
+            }
+        };
+        
+    } catch (error) {
+        console.error('❌ Multi-Agent Error:', error);
+        
+        // Fallback: return popular books
+        const popularBooks = await getPopularBooks(5);
+        
+        return {
+            success: false,
+            message: "I found some popular books you might enjoy!",
+            recommendations: popularBooks,
+            error: error.message,
+            debug: {
+                fallbackUsed: true
+            }
+        };
+    }
 }
 
 // ============================================
@@ -661,72 +580,26 @@ async function getPopularBooks() {
 
 /**
  * POST /api/recommendations/chat
- * Main chat endpoint for recommendations
+ * Main multi-agent chat endpoint
  */
 router.post('/chat', auth, async (req, res) => {
     try {
         const { message } = req.body;
         const userId = req.user?.id;
-
-        if (!message || message.trim().length < 3) {
+        
+        if (!message || message.trim().length < 2) {
             return res.status(400).json({
                 message: 'Please provide a more detailed query'
             });
         }
-
-        console.log(`\n${'='.repeat(50)}`);
-        console.log(`🗣️ User ${userId || 'anonymous'} query: "${message}"`);
-        console.log('='.repeat(50));
-
-        // Get recommendations
-        const { intent, recommendations } = await recommendationAgent(message, userId);
-
-        // Log search for history agent (async, don't wait)
-        logUserSearch(userId, message, intent).catch(console.error);
-
-        // Format response
-        const response = formatResponse(intent, recommendations);
-
-        // Debug info
-        console.log(`\n📤 Sending response with ${recommendations.length} recommendations`);
-        if (recommendations.length > 0) {
-            console.log(`   Top book: "${recommendations[0].title}" with score ${(recommendations[0].scores?.final * 100).toFixed(0)}%`);
-        }
-
-        res.json({
-            success: true,
-            intent: {
-                genre: intent.genre,
-                genreScore: intent.genreScore,
-                mood: intent.mood,
-                moodScore: intent.moodScore,
-                length: intent.length,
-                lengthScore: intent.lengthScore,
-                budget: intent.budget,
-                method: intent.method
-            },
-            recommendations: recommendations.map(book => ({
-                id: book.id,
-                title: book.title,
-                author: book.author,
-                price: book.price,
-                page_count: book.page_count,
-                category: book.category,
-                image_url: book.image_url,
-                description: book.description?.substring(0, 200) + '...',
-                scores: book.scores
-            })),
-            message: response,
-            debug: {
-                totalBooks: recommendations.length,
-                apiTokenSet: !!HF_API_TOKEN,
-                userId: userId || null
-            }
-        });
-
+        
+        const result = await runMultiAgentRecommendation(message, userId);
+        res.json(result);
+        
     } catch (err) {
-        console.error('❌ Recommendation error:', err);
+        console.error('❌ Chat Error:', err);
         res.status(500).json({
+            success: false,
             message: 'Failed to get recommendations',
             error: err.message
         });
@@ -735,49 +608,18 @@ router.post('/chat', auth, async (req, res) => {
 
 /**
  * GET /api/recommendations/test
- * Debug endpoint to test the recommendation system
+ * Test the multi-agent system
  */
 router.get('/test', async (req, res) => {
     try {
-        const testQuery = req.query.q || 'I want a philosophy book';
-
-        console.log('\n🧪 TEST MODE: Testing recommendation system');
+        const testQuery = req.query.q || 'I want a philosophy book under 300 rupees';
+        
+        console.log('\n🧪 TEST MODE');
         console.log(`   Query: "${testQuery}"`);
-        console.log(`   HF Token Set: ${!!HF_API_TOKEN}`);
-
-        // Test intent extraction
-        const intent = await intentAgent(testQuery);
-
-        // Get sample books
-        const [books] = await pool.query('SELECT * FROM books WHERE stock > 0 LIMIT 3');
-
-        // Score sample books
-        const sampleScores = books.map(book => ({
-            title: book.title,
-            category: book.category,
-            genre: genreAgent(book, intent),
-            mood: moodAgent(book, intent),
-            length: lengthAgent(book, intent)
-        }));
-
-        res.json({
-            status: 'ok',
-            testQuery,
-            intent: {
-                genre: intent.genre,
-                genreScore: intent.genreScore,
-                mood: intent.mood,
-                moodScore: intent.moodScore,
-                length: intent.length,
-                lengthScore: intent.lengthScore,
-                method: intent.method
-            },
-            sampleScores,
-            config: {
-                huggingfaceTokenSet: !!HF_API_TOKEN,
-                weights: WEIGHTS
-            }
-        });
+        
+        const result = await runMultiAgentRecommendation(testQuery, null);
+        res.json(result);
+        
     } catch (err) {
         res.status(500).json({
             status: 'error',
@@ -788,169 +630,61 @@ router.get('/test', async (req, res) => {
 
 /**
  * GET /api/recommendations/personalized
- * Get personalized recommendations for dashboard
+ * Get personalized recommendations
  */
 router.get('/personalized', auth, async (req, res) => {
     try {
         const userId = req.user.id;
-
-        // Get user's purchase history categories
-        const [history] = await pool.query(`
-            SELECT DISTINCT b.category, b.author
-            FROM orders o
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN books b ON oi.book_id = b.id
-            WHERE o.user_id = ? AND o.payment_status = 'completed'
-            LIMIT 5
-        `, [userId]);
-
-        if (history.length === 0) {
-            // Cold start - return popular books
-            const popular = await getPopularBooks();
-            return res.json({
-                type: 'popular',
-                title: 'Popular Books',
-                books: popular
-            });
-        }
-
-        // Get books matching user's preferred categories/authors
-        const categories = history.map(h => h.category).filter(Boolean);
-        const authors = history.map(h => h.author).filter(Boolean);
-
-        let query = `
-            SELECT DISTINCT b.*
-            FROM books b
-            WHERE b.stock > 0
-            AND b.id NOT IN (
-                SELECT oi.book_id FROM order_items oi
-                JOIN orders o ON oi.order_id = o.id
-                WHERE o.user_id = ?
-            )
-        `;
-        const params = [userId];
-
-        if (categories.length > 0) {
-            query += ` AND (b.category IN (${categories.map(() => '?').join(',')})`;
-            params.push(...categories);
-
-            if (authors.length > 0) {
-                query += ` OR b.author IN (${authors.map(() => '?').join(',')})`;
-                params.push(...authors);
-            }
-            query += ')';
-        }
-
-        query += ' ORDER BY b.created_at DESC LIMIT 10';
-
-        const [books] = await pool.query(query, params);
-
+        const query = "Recommend books based on my reading preferences and purchase history";
+        
+        const result = await runMultiAgentRecommendation(query, userId);
+        
         res.json({
             type: 'personalized',
             title: 'Recommended For You',
-            books
+            books: result.recommendations,
+            aiMessage: result.message,
+            insights: result.agentInsights
         });
-
+        
     } catch (err) {
         console.error('Personalized recommendations error:', err);
-        res.status(500).json({ message: 'Failed to get recommendations' });
+        
+        // Fallback to popular
+        const popular = await getPopularBooks(5);
+        res.json({
+            type: 'popular',
+            title: 'Popular Books',
+            books: popular
+        });
     }
 });
 
 /**
- * GET /api/recommendations/similar/:bookId
- * Get similar books
+ * GET /api/recommendations/agents
+ * Get information about the agents
  */
-router.get('/similar/:bookId', async (req, res) => {
-    try {
-        const { bookId } = req.params;
-
-        // Get the source book
-        const [sourceBooks] = await pool.query(
-            'SELECT * FROM books WHERE id = ?',
-            [bookId]
-        );
-
-        if (sourceBooks.length === 0) {
-            return res.status(404).json({ message: 'Book not found' });
+router.get('/agents', (req, res) => {
+    res.json({
+        system: 'Multi-Agent Recommendation System',
+        model: GROQ_MODEL,
+        agents: Object.entries(AGENTS).map(([key, agent]) => ({
+            id: key,
+            name: agent.name,
+            role: agent.role
+        })),
+        architecture: {
+            description: 'Coordinated multi-agent system where specialized agents collaborate',
+            flow: [
+                '1. Intent Agent parses user query',
+                '2. History Agent analyzes user preferences',
+                '3. Mood Expert maps emotions to book traits',
+                '4. Search Agent determines search strategy',
+                '5. Ranking Agent scores and ranks matches',
+                '6. Coordinator Agent synthesizes final response'
+            ]
         }
-
-        const sourceBook = sourceBooks[0];
-
-        // Find similar books by category and author
-        const [similar] = await pool.query(`
-            SELECT * FROM books
-            WHERE id != ?
-            AND stock > 0
-            AND (
-                category = ? 
-                OR author = ?
-                OR description LIKE ?
-            )
-            ORDER BY 
-                CASE WHEN author = ? THEN 0 ELSE 1 END,
-                CASE WHEN category = ? THEN 0 ELSE 1 END
-            LIMIT 5
-        `, [
-            bookId,
-            sourceBook.category,
-            sourceBook.author,
-            `%${sourceBook.title?.split(' ')[0]}%`,
-            sourceBook.author,
-            sourceBook.category
-        ]);
-
-        res.json({ books: similar });
-
-    } catch (err) {
-        console.error('Similar books error:', err);
-        res.status(500).json({ message: 'Failed to get similar books' });
-    }
+    });
 });
-
-// Helper: Log user search for history agent
-async function logUserSearch(userId, query, intent) {
-    if (!userId) return;
-
-    try {
-        await pool.query(`
-            INSERT INTO user_search_history 
-            (user_id, query, detected_genre, detected_mood, detected_length, created_at)
-            VALUES (?, ?, ?, ?, ?, NOW())
-        `, [
-            userId,
-            query,
-            intent.genre || null,
-            intent.mood || null,
-            intent.length || null
-        ]);
-    } catch (err) {
-        // Table might not exist yet, that's ok
-        console.log('Search history logging skipped:', err.message);
-    }
-}
-
-// Helper: Format response message
-function formatResponse(intent, recommendations) {
-    if (recommendations.length === 0) {
-        return "I couldn't find any books matching your criteria. Try adjusting your preferences!";
-    }
-
-    let response = "Based on your preferences";
-    const parts = [];
-
-    if (intent.genre) parts.push(`**${intent.genre}** genre`);
-    if (intent.mood) parts.push(`**${intent.mood}** mood`);
-    if (intent.length) parts.push(`**${intent.length}**`);
-    if (intent.budget) parts.push(`budget under **₹${intent.budget}**`);
-
-    if (parts.length > 0) {
-        response += ` (${parts.join(', ')})`;
-    }
-
-    response += `, here are my top ${recommendations.length} recommendations:`;
-
-    return response;
-}
 
 module.exports = router;
