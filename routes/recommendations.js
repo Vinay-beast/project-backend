@@ -38,9 +38,16 @@ Analyze the query and extract:
 4. max_budget: number in rupees - null if not mentioned
 5. keywords: array of important words from the query
 6. user_emotion: detected emotional state (stressed, sad, happy, bored, curious) - null if not clear
+7. book_count: how many books the user wants (1-10). Use these rules:
+   - "a book", "one book", "1 book" → 1
+   - "two books", "2 books", "a couple" → 2
+   - "three books", "3 books", "few books" → 3
+   - "some books", "books", "recommendations" → 5
+   - If user says specific number like "5 books" → that number
+   - If unclear, default to 5
 
 RESPOND ONLY WITH VALID JSON, no other text:
-{"genre": "...", "mood": "...", "length_preference": "...", "max_budget": null, "keywords": [], "user_emotion": null}`
+{"genre": "...", "mood": "...", "length_preference": "...", "max_budget": null, "keywords": [], "user_emotion": null, "book_count": 5}`
     },
 
     HISTORY: {
@@ -105,9 +112,12 @@ Given books and user preferences, for each book calculate:
 6. final_score: weighted combination (relevance 30%, mood 20%, rating 25%, value 10%, personalization 15%)
 7. recommendation_reason: why this book is recommended (mention rating if high)
 
-IMPORTANT: Prioritize books with higher ratings (4+ stars) and more reviews. A book with 4.5 stars and 50 reviews is better than 5 stars with 1 review.
+IMPORTANT: 
+- Prioritize books with higher ratings (4+ stars) and more reviews
+- A book with 4.5 stars and 50 reviews is better than 5 stars with 1 review
+- The user may request a specific number of books - rank ALL books but the system will pick the top N
 
-Output top 5 books with scores.
+Output ranked books with scores (rank as many as provided, the system will limit based on user request).
 
 RESPOND ONLY WITH VALID JSON:
 {"ranked_books": [{"book_id": 1, "final_score": 85, "scores": {...}, "reason": "..."}]}`
@@ -293,7 +303,7 @@ async function getPopularBooks(limit = 10) {
 // Get ratings for a list of books
 async function getBookRatings(bookIds) {
     if (!bookIds || bookIds.length === 0) return {};
-    
+
     const [ratings] = await pool.query(`
         SELECT book_id, 
                ROUND(AVG(rating), 1) as avg_rating, 
@@ -302,7 +312,7 @@ async function getBookRatings(bookIds) {
         WHERE book_id IN (?)
         GROUP BY book_id
     `, [bookIds]);
-    
+
     const ratingsMap = {};
     ratings.forEach(r => {
         ratingsMap[r.book_id] = {
@@ -444,7 +454,7 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
         console.log('\n⭐ PHASE 5.5: Fetching Ratings & Reviews');
         const bookIds = books.map(b => b.id);
         const ratingsMap = await getBookRatings(bookIds);
-        
+
         // Add ratings to books
         books = books.map(b => ({
             ...b,
@@ -485,13 +495,17 @@ IMPORTANT: Consider avg_rating (0-5 stars) and review_count when ranking. Higher
         agentOutputs.ranking = rankingResult;
 
         // ========== Get Top Ranked Books ==========
+        // Use book_count from intent, default to 5
+        const requestedCount = Math.min(Math.max(intentResult.book_count || 5, 1), 10);
+        console.log(`   📚 User requested ${requestedCount} book(s)`);
+        
         let finalBooks = [];
 
         if (rankingResult.ranked_books && rankingResult.ranked_books.length > 0) {
             // Sort by ranking agent's scores
             const rankedIds = rankingResult.ranked_books
                 .sort((a, b) => (b.final_score || 0) - (a.final_score || 0))
-                .slice(0, 5)
+                .slice(0, requestedCount)
                 .map(r => r.book_id);
 
             // Get full book details in ranked order
@@ -509,8 +523,8 @@ IMPORTANT: Consider avg_rating (0-5 stars) and review_count when ranking. Higher
         }
 
         // Fallback if ranking didn't work
-        if (finalBooks.length < 3) {
-            finalBooks = books.slice(0, 5).map(b => ({
+        if (finalBooks.length < 1) {
+            finalBooks = books.slice(0, requestedCount).map(b => ({
                 ...b,
                 match_score: 75,
                 recommendation_reason: 'Recommended based on your query'
@@ -568,6 +582,7 @@ ${finalBooks.map((b, i) => `${i + 1}. "${b.title}" by ${b.author} (₹${b.price}
                     detected_genre: intentResult.genre,
                     detected_mood: intentResult.mood,
                     budget: intentResult.max_budget,
+                    book_count: requestedCount,
                     keywords: intentResult.keywords
                 },
                 history: {
