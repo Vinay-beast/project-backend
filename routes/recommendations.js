@@ -410,11 +410,32 @@ Mood Analysis: ${JSON.stringify(moodResult)}`;
         let books = [];
         let matchedBooks = []; // Track books that actually match the query
 
-        // Primary search based on Search Agent's strategy
+        // Extract direct search terms from the original query (important names, titles)
+        const directTerms = userQuery.toLowerCase()
+            .replace(/recommend|suggest|give|me|a|an|the|book|books|want|need|looking|for/gi, '')
+            .split(/\s+/)
+            .filter(term => term.length > 2);
+
+        console.log(`   Direct terms from query: ${directTerms.join(', ')}`);
+
+        // FIRST: Search by direct terms in title (highest priority for specific requests)
+        if (directTerms.length > 0) {
+            console.log(`   Searching titles for: ${directTerms.join(', ')}`);
+            const titleBooks = await searchBooksByKeywords(directTerms, 30);
+            matchedBooks = [...titleBooks];
+            books = [...titleBooks];
+        }
+
+        // Primary search based on genre
         if (intentResult.genre) {
             console.log(`   Searching by genre: ${intentResult.genre}`);
-            books = await searchBooksByCategory(intentResult.genre, 30);
-            matchedBooks = [...books]; // These are matched books
+            const genreBooks = await searchBooksByCategory(intentResult.genre, 30);
+            for (const book of genreBooks) {
+                if (!matchedBooks.find(b => b.id === book.id)) {
+                    matchedBooks.push(book);
+                    books.push(book);
+                }
+            }
         }
 
         // ALWAYS do keyword search to find more relevant books

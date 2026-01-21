@@ -245,3 +245,21 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE INDEX idx_reviews_book ON reviews(book_id);
 CREATE INDEX idx_reviews_user ON reviews(user_id);
 CREATE INDEX idx_reviews_rating ON reviews(rating);
+
+
+
+-- First, drop the foreign key constraints
+ALTER TABLE order_items DROP FOREIGN KEY fk_items_book;
+ALTER TABLE gifts DROP FOREIGN KEY fk_gifts_book;
+ALTER TABLE reviews DROP FOREIGN KEY fk_reviews_book;
+
+-- Expand the book id column sizes
+ALTER TABLE books MODIFY COLUMN id VARCHAR(20) NOT NULL;
+ALTER TABLE order_items MODIFY COLUMN book_id VARCHAR(20) NOT NULL;
+ALTER TABLE gifts MODIFY COLUMN book_id VARCHAR(20) NOT NULL;
+ALTER TABLE reviews MODIFY COLUMN book_id VARCHAR(20) NOT NULL;
+
+-- Re-add the foreign key constraints
+ALTER TABLE order_items ADD CONSTRAINT fk_items_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE gifts ADD CONSTRAINT fk_gifts_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE reviews ADD CONSTRAINT fk_reviews_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE ON UPDATE CASCADE;
