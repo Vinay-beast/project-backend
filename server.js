@@ -159,7 +159,9 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/google-books', require('./routes/googleBooks'));
 app.use('/api/recommendations', require('./routes/recommendations'));
 
-
+// Book Search & Indexing (Agentic AI)
+app.use('/api/book-search', require('./routes/bookSearch'));
+app.use('/api/indexing', require('./routes/indexing'));
 
 // ----------------------------------------
 // 404 handler

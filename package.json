@@ -8,6 +8,8 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@azure/ai-form-recognizer": "^5.1.0",
+    "@azure/search-documents": "^12.2.0",
     "@azure/storage-blob": "^12.28.0",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
