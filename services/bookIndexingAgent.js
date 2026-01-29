@@ -41,6 +41,16 @@ class BookIndexingAgent {
         console.log('📚 Book Indexing Agent initialized');
     }
 
+    // Helper: Convert readable stream to buffer
+    async streamToBuffer(readableStream) {
+        return new Promise((resolve, reject) => {
+            const chunks = [];
+            readableStream.on('data', (data) => chunks.push(data));
+            readableStream.on('end', () => resolve(Buffer.concat(chunks)));
+            readableStream.on('error', reject);
+        });
+    }
+
     // ========================================
     // AGENT 1: LIST AGENT - Lists all PDFs
     // ========================================
@@ -72,48 +82,88 @@ class BookIndexingAgent {
 
     // ========================================
     // AGENT 2: OCR AGENT - Extracts text from PDF
+    // Uses buffer-based analysis to avoid cross-region issues
     // ========================================
     async extractTextFromPDF(pdfUrl, bookName) {
         console.log(`\n🖼️ OCR AGENT: Extracting text from "${bookName}"...`);
 
         try {
-            // Start the analysis
-            const poller = await this.documentClient.beginAnalyzeDocumentFromUrl(
+            let pdfBuffer;
+
+            // Check if we need to download from blob storage or use URL
+            if (pdfUrl.includes('blob.core.windows.net')) {
+                // Download from Azure Blob Storage first (fixes cross-region issues)
+                console.log(`   📥 Downloading PDF from blob storage...`);
+
+                const containerClient = this.blobServiceClient.getContainerClient(this.bookContainer);
+
+                // Extract blob name from URL (handles both simple filename and full path)
+                const urlParts = new URL(pdfUrl);
+                const pathParts = urlParts.pathname.split('/').filter(p => p);
+                // Remove container name from path to get blob name
+                const blobName = pathParts.slice(1).join('/') || pathParts[pathParts.length - 1];
+
+                console.log(`   📦 Blob name: ${blobName}`);
+
+                const blobClient = containerClient.getBlobClient(blobName);
+                const downloadResponse = await blobClient.download();
+                pdfBuffer = await this.streamToBuffer(downloadResponse.readableStreamBody);
+
+                console.log(`   ✅ Downloaded ${pdfBuffer.length} bytes`);
+            } else {
+                // For non-Azure URLs, try URL-based analysis
+                console.log(`   🌐 Using URL-based analysis...`);
+                const poller = await this.documentClient.beginAnalyzeDocumentFromUrl(
+                    'prebuilt-read',
+                    pdfUrl
+                );
+                const result = await poller.pollUntilDone();
+                return this.extractPagesFromResult(result, bookName);
+            }
+
+            // Use buffer-based analysis (works across regions)
+            console.log(`   🔍 Running Document Intelligence OCR...`);
+            const poller = await this.documentClient.beginAnalyzeDocument(
                 'prebuilt-read',
-                pdfUrl
+                pdfBuffer
             );
 
             // Wait for completion
             const result = await poller.pollUntilDone();
-
-            const pages = [];
-            let pageNumber = 1;
-
-            for (const page of result.pages || []) {
-                let pageText = '';
-
-                // Extract text from lines
-                for (const line of page.lines || []) {
-                    pageText += line.content + '\n';
-                }
-
-                if (pageText.trim()) {
-                    pages.push({
-                        pageNumber,
-                        text: pageText.trim(),
-                        wordCount: pageText.split(/\s+/).length
-                    });
-                }
-                pageNumber++;
-            }
-
-            console.log(`   ✅ Extracted ${pages.length} pages from "${bookName}"`);
-            return pages;
+            return this.extractPagesFromResult(result, bookName);
 
         } catch (error) {
             console.error(`   ❌ OCR Error for "${bookName}":`, error.message);
+            console.error(`   Details:`, error);
             return [];
         }
+    }
+
+    // Helper to extract pages from Document Intelligence result
+    extractPagesFromResult(result, bookName) {
+        const pages = [];
+        let pageNumber = 1;
+
+        for (const page of result.pages || []) {
+            let pageText = '';
+
+            // Extract text from lines
+            for (const line of page.lines || []) {
+                pageText += line.content + '\n';
+            }
+
+            if (pageText.trim()) {
+                pages.push({
+                    pageNumber,
+                    text: pageText.trim(),
+                    wordCount: pageText.split(/\s+/).length
+                });
+            }
+            pageNumber++;
+        }
+
+        console.log(`   ✅ Extracted ${pages.length} pages from "${bookName}"`);
+        return pages;
     }
 
     // ========================================
@@ -313,24 +363,53 @@ class BookIndexingAgent {
     }
 
     // ========================================
+    // ENSURE INDEX EXISTS
+    // ========================================
+    async ensureIndexExists() {
+        try {
+            await this.searchIndexClient.getIndex(this.indexName);
+            console.log(`   ✅ Index "${this.indexName}" exists`);
+            return true;
+        } catch (error) {
+            if (error.statusCode === 404 || error.code === 'ResourceNotFound') {
+                console.log(`   📝 Index "${this.indexName}" not found, creating...`);
+                return await this.createSearchIndex();
+            } else {
+                console.error(`   ❌ Error checking index:`, error.message);
+                throw error;
+            }
+        }
+    }
+
+    // ========================================
     // INDEX SINGLE BOOK (for new uploads)
     // ========================================
     async indexSingleBook(pdfUrl, bookName) {
         console.log(`\n📖 Indexing single book: ${bookName}`);
+        console.log(`   PDF URL: ${pdfUrl}`);
 
         try {
-            // Extract text
+            // Ensure search index exists first
+            await this.ensureIndexExists();
+
+            // Extract text using OCR
             const pages = await this.extractTextFromPDF(pdfUrl, bookName);
 
             if (pages.length === 0) {
-                return { success: false, error: 'No text extracted from PDF' };
+                console.log(`   ⚠️ No text extracted from PDF`);
+                return { success: false, error: 'No text extracted from PDF. The PDF may be image-only or corrupted.' };
             }
 
-            // Create chunks
-            const chunks = this.chunkText(pages, bookName);
+            console.log(`   📄 Extracted ${pages.length} pages`);
 
-            // Push to index
+            // Create searchable chunks
+            const chunks = this.chunkText(pages, bookName);
+            console.log(`   📦 Created ${chunks.length} chunks`);
+
+            // Push to search index
             await this.pushToSearchIndex(chunks);
+
+            console.log(`   ✅ Book "${bookName}" indexed successfully!`);
 
             return {
                 success: true,
