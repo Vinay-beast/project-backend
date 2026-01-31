@@ -7,6 +7,7 @@
 const { BlobServiceClient } = require('@azure/storage-blob');
 const { SearchClient, SearchIndexClient, AzureKeyCredential } = require('@azure/search-documents');
 const { DocumentAnalysisClient } = require('@azure/ai-form-recognizer');
+const pool = require('../config/database');
 
 class BookIndexingAgent {
     constructor() {
@@ -315,7 +316,24 @@ class BookIndexingAgent {
             const allChunks = [];
 
             for (const pdf of pdfs) {
-                const bookName = pdf.name.replace('.pdf', '').replace(/-/g, ' ');
+                // Try to find the actual book title from database
+                let bookName = pdf.name.replace('.pdf', '').replace(/-/g, ' ');
+
+                try {
+                    // The blob filename might contain the book ID or be part of the content_url
+                    const [rows] = await pool.query(
+                        `SELECT title FROM books WHERE content_url LIKE ? LIMIT 1`,
+                        [`%${pdf.name}%`]
+                    );
+                    if (rows.length > 0) {
+                        bookName = rows[0].title;
+                        console.log(`   📖 Matched blob "${pdf.name}" to book "${bookName}"`);
+                    } else {
+                        console.log(`   ⚠️ No database match for blob "${pdf.name}", using filename`);
+                    }
+                } catch (dbError) {
+                    console.log(`   ⚠️ Database lookup failed: ${dbError.message}`);
+                }
 
                 console.log(`\n${'─'.repeat(50)}`);
                 console.log(`📖 Processing: ${bookName}`);
