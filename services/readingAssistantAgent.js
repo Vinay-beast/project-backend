@@ -183,30 +183,25 @@ RESPOND ONLY WITH VALID JSON:
         console.log(`\n📖 CONTENT RETRIEVER: Fetching content for "${bookTitle}"...`);
 
         try {
-            const searchResults = await this.searchClient.search(`"${bookTitle}"`, {
-                filter: `bookName eq '${bookTitle}'`,
+            // First try flexible search with the book title (like image search does)
+            const searchResults = await this.searchClient.search(bookTitle, {
                 top: maxChunks,
                 orderBy: ['pageNumber asc', 'chunkIndex asc'],
-                select: ['bookName', 'pageNumber', 'content', 'chunkIndex']
+                select: ['bookName', 'pageNumber', 'content', 'chunkIndex'],
+                highlightFields: 'content'
             });
 
             const chunks = [];
+            let foundBookName = null;
+
             for await (const result of searchResults.results) {
-                chunks.push({
-                    page: result.document.pageNumber,
-                    content: result.document.content
-                });
-            }
+                // Only include results from the same book (first match determines the book)
+                if (!foundBookName) {
+                    foundBookName = result.document.bookName;
+                }
 
-            // If exact match didn't work, try fuzzy search
-            if (chunks.length === 0) {
-                console.log(`   ⚠️ No exact match, trying fuzzy search...`);
-                const fuzzyResults = await this.searchClient.search(bookTitle, {
-                    top: maxChunks,
-                    select: ['bookName', 'pageNumber', 'content', 'chunkIndex']
-                });
-
-                for await (const result of fuzzyResults.results) {
+                // Include chunks from the same book
+                if (result.document.bookName === foundBookName) {
                     chunks.push({
                         page: result.document.pageNumber,
                         content: result.document.content,
@@ -215,7 +210,7 @@ RESPOND ONLY WITH VALID JSON:
                 }
             }
 
-            console.log(`   ✅ Retrieved ${chunks.length} content chunks`);
+            console.log(`   ✅ Retrieved ${chunks.length} content chunks from "${foundBookName || 'unknown'}"`);
             return chunks;
 
         } catch (error) {
