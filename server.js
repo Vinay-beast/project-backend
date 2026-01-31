@@ -163,6 +163,9 @@ app.use('/api/recommendations', require('./routes/recommendations'));
 app.use('/api/book-search', require('./routes/bookSearch'));
 app.use('/api/indexing', require('./routes/indexing'));
 
+// Smart Reading Assistant (Agentic AI - Summaries & Insights)
+app.use('/api/reading-assistant', require('./routes/readingAssistant'));
+
 // ----------------------------------------
 // 404 handler
 // ----------------------------------------
