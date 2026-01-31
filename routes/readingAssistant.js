@@ -308,4 +308,42 @@ router.get('/status', (req, res) => {
     });
 });
 
+/**
+ * GET /api/reading-assistant/debug/search/:bookTitle
+ * Debug endpoint to test Azure Search (no auth required)
+ */
+router.get('/debug/search/:bookTitle', async (req, res) => {
+    try {
+        const { bookTitle } = req.params;
+        const assistant = getReadingAssistant();
+
+        if (!assistant) {
+            return res.json({
+                success: false,
+                error: 'Assistant not initialized',
+                initError: initError
+            });
+        }
+
+        // Test the search
+        const chunks = await assistant.retrieveBookContent(bookTitle, 5);
+
+        res.json({
+            success: true,
+            searchedFor: bookTitle,
+            chunksFound: chunks.length,
+            sampleChunks: chunks.slice(0, 3).map(c => ({
+                bookName: c.bookName,
+                page: c.page,
+                contentPreview: c.content?.substring(0, 200) + '...'
+            }))
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
