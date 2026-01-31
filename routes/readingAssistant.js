@@ -346,4 +346,52 @@ router.get('/debug/search/:bookTitle', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/reading-assistant/debug/list-all
+ * List all books in Azure Search index
+ */
+router.get('/debug/list-all', async (req, res) => {
+    try {
+        const assistant = getReadingAssistant();
+
+        if (!assistant) {
+            return res.json({ success: false, error: 'Assistant not initialized' });
+        }
+
+        // Wildcard search to get all documents
+        const searchResults = await assistant.searchClient.search('*', {
+            top: 50,
+            select: ['bookName', 'pageNumber']
+        });
+
+        const books = new Map();
+        let totalDocs = 0;
+
+        for await (const result of searchResults.results) {
+            totalDocs++;
+            const bookName = result.document.bookName || 'Unknown';
+            if (!books.has(bookName)) {
+                books.set(bookName, { count: 0, pages: [] });
+            }
+            const book = books.get(bookName);
+            book.count++;
+            if (book.pages.length < 5) {
+                book.pages.push(result.document.pageNumber);
+            }
+        }
+
+        res.json({
+            success: true,
+            totalDocumentsFound: totalDocs,
+            uniqueBooks: books.size,
+            books: Object.fromEntries(books)
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
