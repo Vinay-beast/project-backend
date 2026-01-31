@@ -7,15 +7,25 @@
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const pool = require('../config/database');
-const ReadingAssistantAgent = require('../services/readingAssistantAgent');
 
-// Initialize the reading assistant agent
-let readingAssistant;
+// Lazy-load the reading assistant agent to prevent server crashes
+let readingAssistant = null;
+let initError = null;
 
-try {
-    readingAssistant = new ReadingAssistantAgent();
-} catch (error) {
-    console.error('Failed to initialize ReadingAssistantAgent:', error.message);
+function getReadingAssistant() {
+    if (readingAssistant) return readingAssistant;
+    if (initError) return null;
+
+    try {
+        const ReadingAssistantAgent = require('../services/readingAssistantAgent');
+        readingAssistant = new ReadingAssistantAgent();
+        console.log('📚 Reading Assistant Agent loaded successfully');
+        return readingAssistant;
+    } catch (error) {
+        console.error('Failed to initialize ReadingAssistantAgent:', error.message);
+        initError = error.message;
+        return null;
+    }
 }
 
 // ============================================
@@ -31,10 +41,12 @@ router.get('/summary/:bookId', auth, async (req, res) => {
         const { bookId } = req.params;
         const userId = req.user.id;
 
-        if (!readingAssistant) {
-            return res.status(500).json({
+        const assistant = getReadingAssistant();
+        if (!assistant) {
+            return res.status(503).json({
                 success: false,
-                error: 'Reading assistant not initialized'
+                error: 'Reading assistant service unavailable. Check Azure Search configuration.',
+                initError: initError
             });
         }
 
@@ -54,7 +66,7 @@ router.get('/summary/:bookId', auth, async (req, res) => {
         const book = books[0];
 
         // Check if user has access to this book
-        const accessCheck = await readingAssistant.checkBookAccess(userId, bookId);
+        const accessCheck = await assistant.checkBookAccess(userId, bookId);
 
         if (!accessCheck.hasAccess) {
             return res.status(403).json({
@@ -67,7 +79,7 @@ router.get('/summary/:bookId', auth, async (req, res) => {
         console.log(`📚 Generating summary for "${book.title}" (User: ${userId}, Access: ${accessCheck.accessType})`);
 
         // Generate or retrieve cached summary
-        const result = await readingAssistant.generateBookSummary(bookId, book.title);
+        const result = await assistant.generateBookSummary(bookId, book.title);
 
         if (result.success) {
             res.json({
@@ -116,11 +128,9 @@ router.get('/quick-summary/:bookId', auth, async (req, res) => {
         const { bookId } = req.params;
         const userId = req.user.id;
 
-        if (!readingAssistant) {
-            return res.status(500).json({
-                success: false,
-                error: 'Reading assistant not initialized'
-            });
+        const assistant = getReadingAssistant();
+        if (!assistant) {
+            return res.status(503).json({ success: false, error: 'Service unavailable' });
         }
 
         // Get book details
@@ -134,7 +144,7 @@ router.get('/quick-summary/:bookId', auth, async (req, res) => {
         }
 
         // Check ownership
-        const accessCheck = await readingAssistant.checkBookAccess(userId, bookId);
+        const accessCheck = await assistant.checkBookAccess(userId, bookId);
         if (!accessCheck.hasAccess) {
             return res.status(403).json({
                 success: false,
@@ -142,7 +152,7 @@ router.get('/quick-summary/:bookId', auth, async (req, res) => {
             });
         }
 
-        const result = await readingAssistant.generateQuickSummary(bookId, books[0].title);
+        const result = await assistant.generateQuickSummary(bookId, books[0].title);
         res.json(result);
 
     } catch (error) {
@@ -160,11 +170,12 @@ router.get('/check-access/:bookId', auth, async (req, res) => {
         const { bookId } = req.params;
         const userId = req.user.id;
 
-        if (!readingAssistant) {
+        const assistant = getReadingAssistant();
+        if (!assistant) {
             return res.json({ hasAccess: false, reason: 'Service unavailable' });
         }
 
-        const accessCheck = await readingAssistant.checkBookAccess(userId, bookId);
+        const accessCheck = await assistant.checkBookAccess(userId, bookId);
 
         // Also check if summary is cached
         let hasCachedSummary = false;
@@ -237,11 +248,12 @@ router.put('/progress/:bookId', auth, async (req, res) => {
         const { progressPercent, currentPage } = req.body;
 
         // Check if user owns the book
-        if (!readingAssistant) {
-            return res.status(500).json({ success: false, error: 'Service unavailable' });
+        const assistant = getReadingAssistant();
+        if (!assistant) {
+            return res.status(503).json({ success: false, error: 'Service unavailable' });
         }
 
-        const accessCheck = await readingAssistant.checkBookAccess(userId, bookId);
+        const accessCheck = await assistant.checkBookAccess(userId, bookId);
         if (!accessCheck.hasAccess) {
             return res.status(403).json({ success: false, error: 'Book not owned' });
         }
@@ -277,15 +289,17 @@ router.put('/progress/:bookId', auth, async (req, res) => {
  * Check service status
  */
 router.get('/status', (req, res) => {
+    const assistant = getReadingAssistant();
     res.json({
-        status: readingAssistant ? 'ready' : 'not_initialized',
+        status: assistant ? 'ready' : 'not_initialized',
+        initError: initError,
         features: {
             summaryGeneration: true,
             keyPointsExtraction: true,
             readingProgress: true,
             readingPaths: false // Future feature
         },
-        agents: readingAssistant ? [
+        agents: assistant ? [
             { name: 'Content Retriever', status: 'active' },
             { name: 'Summary Generator', status: 'active' },
             { name: 'Key Points Extractor', status: 'active' },
