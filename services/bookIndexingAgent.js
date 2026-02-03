@@ -7,6 +7,7 @@
 const { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } = require('@azure/storage-blob');
 const { SearchClient, SearchIndexClient, AzureKeyCredential } = require('@azure/search-documents');
 const { DocumentAnalysisClient } = require('@azure/ai-form-recognizer');
+const pool = require('../config/database');
 
 class BookIndexingAgent {
     constructor() {
@@ -49,17 +50,24 @@ class BookIndexingAgent {
     }
 
     // ========================================
-    // AGENT 1: LIST AGENT - Lists all PDFs
+    // AGENT 1: LIST AGENT - Lists all PDFs/Book files
     // ========================================
     async listPDFsFromBlob() {
-        console.log('\n🔍 LIST AGENT: Scanning Azure Blob Storage for PDFs...');
+        console.log('\n🔍 LIST AGENT: Scanning Azure Blob Storage for book files...');
 
         const containerClient = this.blobServiceClient.getContainerClient(this.bookContainer);
         const pdfs = [];
 
         try {
             for await (const blob of containerClient.listBlobsFlat()) {
-                if (blob.name.toLowerCase().endsWith('.pdf')) {
+                // Check if it's a PDF by extension OR content type
+                const isPdf = blob.name.toLowerCase().endsWith('.pdf') || 
+                              blob.properties.contentType === 'application/pdf';
+                
+                // Also include files without extension (likely book uploads)
+                const hasNoExtension = !blob.name.includes('.') || blob.name.split('.').pop().length > 5;
+                
+                if (isPdf || hasNoExtension) {
                     // Generate SAS token for this blob (valid for 1 hour)
                     const sasUrl = await this.generateBlobSasUrl(blob.name);
 
@@ -67,16 +75,17 @@ class BookIndexingAgent {
                         name: blob.name,
                         url: sasUrl, // Use SAS URL instead of plain URL
                         size: blob.properties.contentLength,
-                        lastModified: blob.properties.lastModified
+                        lastModified: blob.properties.lastModified,
+                        contentType: blob.properties.contentType
                     });
-                    console.log(`   📄 Found: ${blob.name}`);
+                    console.log(`   📄 Found: ${blob.name} (${blob.properties.contentType || 'unknown type'})`);
                 }
             }
         } catch (error) {
             console.error('   ❌ Error listing PDFs:', error.message);
         }
 
-        console.log(`   ✅ Found ${pdfs.length} PDF files`);
+        console.log(`   ✅ Found ${pdfs.length} book files`);
         return pdfs;
     }
 
@@ -208,6 +217,39 @@ class BookIndexingAgent {
             .substring(0, 50);
     }
 
+    // Get book name from database using filename pattern
+    async getBookNameFromFilename(filename) {
+        try {
+            // Pattern: book_123_content.pdf -> extract bookId = 123
+            const match = filename.match(/book[_-]?(\d+)[_-]?content/i);
+            if (match) {
+                const bookId = match[1];
+                const [rows] = await pool.query('SELECT title, author FROM books WHERE id = ?', [bookId]);
+                if (rows.length > 0) {
+                    const book = rows[0];
+                    console.log(`   📚 Found in DB: "${book.title}" by ${book.author}`);
+                    return `${book.title} by ${book.author}`;
+                }
+            }
+            
+            // Try to find by content_url containing the filename
+            const [urlRows] = await pool.query(
+                'SELECT title, author FROM books WHERE content_url LIKE ?',
+                [`%${filename}%`]
+            );
+            if (urlRows.length > 0) {
+                const book = urlRows[0];
+                console.log(`   📚 Found by URL: "${book.title}" by ${book.author}`);
+                return `${book.title} by ${book.author}`;
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('   ⚠️ Database lookup failed:', error.message);
+            return null;
+        }
+    }
+
     // ========================================
     // AGENT 4: INDEX AGENT - Creates/updates search index
     // ========================================
@@ -307,10 +349,20 @@ class BookIndexingAgent {
             const allChunks = [];
 
             for (const pdf of pdfs) {
-                const bookName = pdf.name.replace('.pdf', '').replace(/-/g, ' ');
+                // Try to get book name from database using bookId in filename
+                let bookName = await this.getBookNameFromFilename(pdf.name);
+                if (!bookName) {
+                    // Fallback: clean up filename
+                    bookName = pdf.name.replace('.pdf', '').replace(/[-_]/g, ' ').replace(/book \d+ content/i, '').trim();
+                    if (!bookName || bookName.match(/^\d+\s*[a-f0-9]+$/i)) {
+                        // If still looks like a random ID, use a generic name with timestamp
+                        bookName = `Book uploaded ${new Date(pdf.lastModified).toLocaleDateString()}`;
+                    }
+                }
 
                 console.log(`\n${'─'.repeat(50)}`);
                 console.log(`📖 Processing: ${bookName}`);
+                console.log(`   📁 File: ${pdf.name}`);
                 console.log('─'.repeat(50));
 
                 // Extract text using OCR
