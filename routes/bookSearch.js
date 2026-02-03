@@ -1,13 +1,15 @@
-    // ============================================
-// BOOK SEARCH API - 5-AGENT QUERY PIPELINE
-// Finds which book a page image belongs to
+// ============================================
+// BOOK SEARCH API - SIMPLIFIED AI PIPELINE
+// Uses OCR + Groq AI to identify books
+// Then checks database for availability
 // ============================================
 
 const router = require('express').Router();
 const multer = require('multer');
 const { DocumentAnalysisClient } = require('@azure/ai-form-recognizer');
-const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
+const { AzureKeyCredential } = require('@azure/search-documents');
 const https = require('https');
+const pool = require('../config/database');
 
 // Multer config for image uploads
 const upload = multer({
@@ -24,20 +26,12 @@ const upload = multer({
 });
 
 // ============================================
-// AZURE SERVICE CLIENTS
+// AZURE DOCUMENT INTELLIGENCE (OCR)
 // ============================================
 
-// Document Intelligence (OCR)
 const documentClient = new DocumentAnalysisClient(
     process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
     new AzureKeyCredential(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY)
-);
-
-// Cognitive Search
-const searchClient = new SearchClient(
-    process.env.AZURE_SEARCH_ENDPOINT,
-    'book-pages-index',
-    new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
 );
 
 // Groq API Config
@@ -52,62 +46,46 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 const AGENTS = {
     OCR: {
         name: '🖼️ OCR Agent',
-        role: 'Extract text from uploaded image'
+        role: 'Extract text from uploaded image using Azure Document Intelligence'
     },
-    PROCESSING: {
-        name: '🧹 Text Processing Agent',
-        role: 'Clean and extract key phrases from OCR text',
-        systemPrompt: `You are a Text Processing Agent. Your job is to clean OCR-extracted text and identify key searchable phrases.
+    BOOK_IDENTIFIER: {
+        name: '📚 Book Identifier Agent',
+        role: 'Identify the book from extracted text',
+        systemPrompt: `You are a Book Identification Expert. Your job is to identify which book a text excerpt belongs to.
 
-Given OCR text from a book page image, extract:
-1. cleaned_text: Remove OCR noise, fix obvious typos, format properly
-2. key_phrases: Most distinctive phrases (3-5 words each) that would identify this specific book
-3. potential_title: If you see what looks like a book title or chapter name
-4. potential_author: If you see an author name
-5. genre_hints: What genre this text suggests (fiction, non-fiction, self-help, etc.)
-
-RESPOND ONLY WITH VALID JSON:
-{"cleaned_text": "...", "key_phrases": [], "potential_title": null, "potential_author": null, "genre_hints": []}`
-    },
-    SEARCH: {
-        name: '🔍 Search Agent',
-        role: 'Query Azure Cognitive Search index'
-    },
-    RANKING: {
-        name: '📊 Ranking Agent',
-        role: 'Score and rank search results',
-        systemPrompt: `You are a Ranking Agent. Your job is to analyze search results and determine the most likely book match.
-
-Given the OCR text and search results, calculate:
-1. best_match: The book name with highest confidence
-2. confidence_score: 0-100 how confident you are this is the right book
-3. page_estimate: Which page this likely is from
-4. match_reasons: Why you think this is the right match
-5. alternative_matches: Other possible books (if any) with their confidence
+Given OCR-extracted text from a book page, identify:
+1. book_title: The most likely book title (be specific, use the exact common title)
+2. author: The author's name if you can determine it
+3. confidence: How confident you are (0-100)
+4. reasoning: Brief explanation of why you think this is the book
 
 Consider:
-- Exact phrase matches are strongest evidence
-- Multiple chunks from same book = higher confidence  
-- Keyword overlap importance
-- Context and genre consistency
+- Writing style and tone
+- Key phrases, terms, or concepts
+- Character names or story elements
+- Famous quotes or passages you recognize
+- Genre indicators
+
+IMPORTANT: Return the EXACT book title as it would appear in a bookstore or database.
+For example: "Rich Dad Poor Dad" not "Rich Dad, Poor Dad" or "RICH DAD POOR DAD"
 
 RESPOND ONLY WITH VALID JSON:
-{"best_match": "...", "confidence_score": 85, "page_estimate": 47, "match_reasons": [], "alternative_matches": []}`
+{"book_title": "...", "author": "...", "confidence": 85, "reasoning": "..."}`
     },
     RESPONSE: {
         name: '🤖 Response Agent',
-        role: 'Generate human-friendly explanation',
-        systemPrompt: `You are a Response Agent. Generate a friendly, clear explanation of how the book was identified.
+        role: 'Generate user-friendly response',
+        systemPrompt: `You are a friendly assistant. Generate a helpful response about the book identification.
 
-Given the search results and ranking, create:
-1. message: A conversational explanation (2-3 sentences) of which book was found and why
-2. confidence_explanation: Why you're confident (or not) about this match
-3. excerpt_highlight: A short quote from the matched text that proves the match
+Given the book identification result and database match status, create a friendly message.
 
-Be helpful and clear. If confidence is low, explain why and suggest alternatives.
+If book is available: Encourage the user to check it out and mention it's available for purchase.
+If book is not available: Politely inform that we identified the book but don't have it in our collection.
+
+Keep it brief and friendly (2-3 sentences max).
 
 RESPOND ONLY WITH VALID JSON:
-{"message": "...", "confidence_explanation": "...", "excerpt_highlight": "..."}`
+{"message": "...", "recommendation": "..."}`
     }
 };
 
@@ -188,6 +166,90 @@ async function callGroqAgent(agentType, userMessage, context = '') {
 }
 
 // ============================================
+// DATABASE SEARCH - Find matching book
+// ============================================
+
+async function findBookInDatabase(bookTitle, author) {
+    console.log(`\n🔍 Searching database for: "${bookTitle}" by ${author || 'Unknown'}`);
+
+    try {
+        // Clean up the title for search
+        const cleanTitle = bookTitle.toLowerCase().trim();
+
+        // Try multiple search strategies
+
+        // 1. Exact match
+        let [rows] = await pool.query(
+            'SELECT * FROM books WHERE LOWER(title) = ?',
+            [cleanTitle]
+        );
+
+        if (rows.length > 0) {
+            console.log(`   ✅ Exact match found: "${rows[0].title}"`);
+            return rows[0];
+        }
+
+        // 2. LIKE match (contains)
+        [rows] = await pool.query(
+            'SELECT * FROM books WHERE LOWER(title) LIKE ?',
+            [`%${cleanTitle}%`]
+        );
+
+        if (rows.length > 0) {
+            console.log(`   ✅ Partial match found: "${rows[0].title}"`);
+            return rows[0];
+        }
+
+        // 3. Search with individual words (for titles like "Rich Dad Poor Dad")
+        const words = cleanTitle.split(/\s+/).filter(w => w.length > 2);
+        if (words.length >= 2) {
+            const likeConditions = words.map(() => 'LOWER(title) LIKE ?').join(' AND ');
+            const likeParams = words.map(w => `%${w}%`);
+
+            [rows] = await pool.query(
+                `SELECT * FROM books WHERE ${likeConditions}`,
+                likeParams
+            );
+
+            if (rows.length > 0) {
+                console.log(`   ✅ Word match found: "${rows[0].title}"`);
+                return rows[0];
+            }
+        }
+
+        // 4. Try author match if title didn't work
+        if (author) {
+            const cleanAuthor = author.toLowerCase().trim();
+            [rows] = await pool.query(
+                'SELECT * FROM books WHERE LOWER(author) LIKE ?',
+                [`%${cleanAuthor}%`]
+            );
+
+            if (rows.length > 0) {
+                // Check if any title is somewhat similar
+                for (const book of rows) {
+                    const bookTitleWords = book.title.toLowerCase().split(/\s+/);
+                    const searchWords = cleanTitle.split(/\s+/);
+                    const matchCount = searchWords.filter(w => bookTitleWords.some(bw => bw.includes(w) || w.includes(bw))).length;
+
+                    if (matchCount >= 1) {
+                        console.log(`   ✅ Author+partial title match: "${book.title}"`);
+                        return book;
+                    }
+                }
+            }
+        }
+
+        console.log(`   ❌ No match found in database`);
+        return null;
+
+    } catch (error) {
+        console.error('   ❌ Database search error:', error.message);
+        return null;
+    }
+}
+
+// ============================================
 // MAIN SEARCH PIPELINE
 // ============================================
 
@@ -223,92 +285,62 @@ async function runBookSearchPipeline(imageBuffer) {
         console.log(`   ✅ Extracted ${extractedText.split(/\s+/).length} words`);
         agentOutputs.ocr = {
             agent: AGENTS.OCR.name,
-            extractedText: extractedText.trim(),
+            extractedText: extractedText.trim().substring(0, 500) + '...',
             wordCount: extractedText.split(/\s+/).length
         };
 
-        // ========== AGENT 2: TEXT PROCESSING ==========
-        console.log('\n🧹 AGENT 2: Processing extracted text...');
+        // ========== AGENT 2: BOOK IDENTIFICATION ==========
+        console.log('\n📚 AGENT 2: Identifying book from text...');
 
-        const processingResult = await callGroqAgent(
-            'PROCESSING',
-            `OCR extracted text:\n${extractedText.substring(0, 2000)}`
+        const identificationResult = await callGroqAgent(
+            'BOOK_IDENTIFIER',
+            `Identify which book this text excerpt is from:\n\n"${extractedText.substring(0, 2000)}"`
         );
 
-        agentOutputs.processing = {
-            agent: AGENTS.PROCESSING.name,
-            ...processingResult
+        console.log(`   📖 Identified: "${identificationResult.book_title}" by ${identificationResult.author}`);
+        console.log(`   📊 Confidence: ${identificationResult.confidence}%`);
+
+        agentOutputs.identification = {
+            agent: AGENTS.BOOK_IDENTIFIER.name,
+            ...identificationResult
         };
 
-        // ========== AGENT 3: SEARCH ==========
-        console.log('\n🔍 AGENT 3: Searching indexed books...');
+        // ========== AGENT 3: DATABASE SEARCH ==========
+        console.log('\n🗄️ AGENT 3: Searching database for book...');
 
-        // Build search query from key phrases
-        const searchQuery = processingResult.key_phrases?.join(' ') || extractedText.substring(0, 500);
-
-        const searchResults = await searchClient.search(searchQuery, {
-            top: 10,
-            includeTotalCount: true,
-            highlightFields: 'content',
-            select: ['bookName', 'pageNumber', 'content', 'chunkIndex']
-        });
-
-        const matches = [];
-        for await (const result of searchResults.results) {
-            matches.push({
-                bookName: result.document.bookName,
-                pageNumber: result.document.pageNumber,
-                content: result.document.content?.substring(0, 300),
-                score: result.score
-            });
-        }
-
-        console.log(`   ✅ Found ${matches.length} potential matches`);
-
-        agentOutputs.search = {
-            agent: AGENTS.SEARCH.name,
-            query: searchQuery.substring(0, 100) + '...',
-            matchCount: matches.length,
-            topMatches: matches.slice(0, 5)
-        };
-
-        // ========== AGENT 4: RANKING ==========
-        console.log('\n📊 AGENT 4: Ranking results...');
-
-        const rankingContext = `
-OCR Extracted Text (first 500 chars):
-"${extractedText.substring(0, 500)}"
-
-Search Results:
-${JSON.stringify(matches.slice(0, 5), null, 2)}
-
-Key Phrases Identified: ${processingResult.key_phrases?.join(', ')}
-`;
-
-        const rankingResult = await callGroqAgent(
-            'RANKING',
-            'Analyze these search results and determine the most likely book match',
-            rankingContext
+        const dbBook = await findBookInDatabase(
+            identificationResult.book_title,
+            identificationResult.author
         );
 
-        agentOutputs.ranking = {
-            agent: AGENTS.RANKING.name,
-            ...rankingResult
+        const isAvailable = dbBook !== null;
+
+        agentOutputs.database = {
+            agent: '🗄️ Database Agent',
+            searchedTitle: identificationResult.book_title,
+            found: isAvailable,
+            matchedBook: isAvailable ? {
+                id: dbBook.id,
+                title: dbBook.title,
+                author: dbBook.author,
+                price: dbBook.price,
+                cover_image: dbBook.cover_image
+            } : null
         };
 
-        // ========== AGENT 5: RESPONSE ==========
-        console.log('\n🤖 AGENT 5: Generating response...');
+        // ========== AGENT 4: RESPONSE GENERATION ==========
+        console.log('\n🤖 AGENT 4: Generating response...');
 
         const responseContext = `
-Best Match: ${rankingResult.best_match}
-Confidence: ${rankingResult.confidence_score}%
-Page Estimate: ${rankingResult.page_estimate}
-Match Reasons: ${rankingResult.match_reasons?.join(', ')}
+Book Identified: "${identificationResult.book_title}" by ${identificationResult.author}
+Confidence: ${identificationResult.confidence}%
+Available in our store: ${isAvailable ? 'YES' : 'NO'}
+${isAvailable ? `Store Title: "${dbBook.title}" - Price: $${dbBook.price}` : ''}
 `;
 
         const responseResult = await callGroqAgent(
             'RESPONSE',
-            'Generate a friendly explanation of the book identification result',
+            'Generate a friendly response for the user',
             responseContext
         );
 
@@ -323,26 +355,49 @@ Match Reasons: ${rankingResult.match_reasons?.join(', ')}
         console.log('\n' + '═'.repeat(60));
         console.log('✅ BOOK SEARCH PIPELINE COMPLETE');
         console.log(`   ⏱️ Total time: ${endTime - startTime}ms`);
-        console.log(`   📚 Best match: ${rankingResult.best_match} (${rankingResult.confidence_score}%)`);
+        console.log(`   📚 Book: ${identificationResult.book_title}`);
+        console.log(`   ✅ Available: ${isAvailable ? 'YES' : 'NO'}`);
         console.log('═'.repeat(60) + '\n');
 
-        return {
-            success: true,
-            result: {
-                bookName: rankingResult.best_match,
-                pageNumber: rankingResult.page_estimate,
-                confidence: rankingResult.confidence_score,
-                message: responseResult.message,
-                confidenceExplanation: responseResult.confidence_explanation,
-                excerptHighlight: responseResult.excerpt_highlight
-            },
-            agentInsights: agentOutputs,
-            debug: {
-                processingTimeMs: endTime - startTime,
-                ocrWordCount: agentOutputs.ocr.wordCount,
-                searchMatches: matches.length
-            }
-        };
+        // Return different response based on availability
+        if (isAvailable) {
+            return {
+                success: true,
+                found: true,
+                result: {
+                    identifiedTitle: identificationResult.book_title,
+                    identifiedAuthor: identificationResult.author,
+                    confidence: identificationResult.confidence,
+                    reasoning: identificationResult.reasoning,
+                    message: responseResult.message,
+                    book: {
+                        id: dbBook.id,
+                        title: dbBook.title,
+                        author: dbBook.author,
+                        price: dbBook.price,
+                        rental_price: dbBook.rental_price,
+                        cover_image: dbBook.cover_image,
+                        description: dbBook.description
+                    }
+                },
+                agentInsights: agentOutputs,
+                processingTimeMs: endTime - startTime
+            };
+        } else {
+            return {
+                success: true,
+                found: false,
+                result: {
+                    identifiedTitle: identificationResult.book_title,
+                    identifiedAuthor: identificationResult.author,
+                    confidence: identificationResult.confidence,
+                    reasoning: identificationResult.reasoning,
+                    message: responseResult.message || `We identified this as "${identificationResult.book_title}" but it's not currently available in our store.`
+                },
+                agentInsights: agentOutputs,
+                processingTimeMs: endTime - startTime
+            };
+        }
 
     } catch (error) {
         console.error('❌ Pipeline Error:', error);
@@ -387,59 +442,46 @@ router.post('/image', upload.single('image'), async (req, res) => {
 
 /**
  * GET /api/book-search/status
- * Check if the search index is ready
+ * Check if the service is ready
  */
 router.get('/status', async (req, res) => {
     try {
-        const countResult = await searchClient.search('*', {
-            top: 0,
-            includeTotalCount: true
-        });
+        // Check database connection
+        const [rows] = await pool.query('SELECT COUNT(*) as count FROM books');
 
         res.json({
             status: 'ready',
-            indexName: 'book-pages-index',
-            documentCount: countResult.count || 0,
+            booksInDatabase: rows[0].count,
             services: {
                 documentIntelligence: !!process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
-                cognitiveSearch: !!process.env.AZURE_SEARCH_KEY,
-                groq: !!process.env.GROQ_API_KEY
+                groq: !!process.env.GROQ_API_KEY,
+                database: true
             }
         });
-
     } catch (error) {
         res.json({
             status: 'error',
             error: error.message,
             services: {
                 documentIntelligence: !!process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
-                cognitiveSearch: !!process.env.AZURE_SEARCH_KEY,
-                groq: !!process.env.GROQ_API_KEY
+                groq: !!process.env.GROQ_API_KEY,
+                database: false
             }
         });
     }
 });
 
 /**
- * GET /api/book-search/agents
- * Get info about the agents
+ * GET /api/book-search/test
+ * Test endpoint
  */
-router.get('/agents', (req, res) => {
+router.get('/test', (req, res) => {
     res.json({
-        system: '5-Agent Book Search Pipeline',
-        description: 'Identifies which book a page image belongs to',
-        agents: Object.entries(AGENTS).map(([key, agent]) => ({
-            id: key,
-            name: agent.name,
-            role: agent.role
-        })),
-        flow: [
-            '1. OCR Agent - Extracts text from uploaded image using Azure Document Intelligence',
-            '2. Processing Agent - Cleans text and extracts key phrases using Groq AI',
-            '3. Search Agent - Queries Azure Cognitive Search index',
-            '4. Ranking Agent - Scores results and determines best match using Groq AI',
-            '5. Response Agent - Generates human-friendly explanation using Groq AI'
-        ]
+        message: 'Book Search API is running',
+        agents: Object.keys(AGENTS).map(key => ({
+            name: AGENTS[key].name,
+            role: AGENTS[key].role
+        }))
     });
 });
 
