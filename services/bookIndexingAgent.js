@@ -61,12 +61,12 @@ class BookIndexingAgent {
         try {
             for await (const blob of containerClient.listBlobsFlat()) {
                 // Check if it's a PDF by extension OR content type
-                const isPdf = blob.name.toLowerCase().endsWith('.pdf') || 
-                              blob.properties.contentType === 'application/pdf';
-                
+                const isPdf = blob.name.toLowerCase().endsWith('.pdf') ||
+                    blob.properties.contentType === 'application/pdf';
+
                 // Also include files without extension (likely book uploads)
                 const hasNoExtension = !blob.name.includes('.') || blob.name.split('.').pop().length > 5;
-                
+
                 if (isPdf || hasNoExtension) {
                     // Generate SAS token for this blob (valid for 1 hour)
                     const sasUrl = await this.generateBlobSasUrl(blob.name);
@@ -126,16 +126,21 @@ class BookIndexingAgent {
     // ========================================
     async extractTextFromPDF(pdfUrl, bookName) {
         console.log(`\n🖼️ OCR AGENT: Extracting text from "${bookName}"...`);
+        console.log(`   📎 URL: ${pdfUrl.substring(0, 100)}...`);
 
         try {
             // Start the analysis
+            console.log(`   ⏳ Starting Document Intelligence analysis...`);
             const poller = await this.documentClient.beginAnalyzeDocumentFromUrl(
                 'prebuilt-read',
                 pdfUrl
             );
 
+            console.log(`   ⏳ Waiting for OCR to complete (this may take a few minutes for large PDFs)...`);
             // Wait for completion
             const result = await poller.pollUntilDone();
+
+            console.log(`   📄 Analysis complete. Found ${result.pages?.length || 0} pages.`);
 
             const pages = [];
             let pageNumber = 1;
@@ -158,11 +163,17 @@ class BookIndexingAgent {
                 pageNumber++;
             }
 
-            console.log(`   ✅ Extracted ${pages.length} pages from "${bookName}"`);
+            console.log(`   ✅ Extracted ${pages.length} pages with text from "${bookName}"`);
             return pages;
 
         } catch (error) {
-            console.error(`   ❌ OCR Error for "${bookName}":`, error.message);
+            console.error(`   ❌ OCR Error for "${bookName}":`);
+            console.error(`      Error Type: ${error.name}`);
+            console.error(`      Error Message: ${error.message}`);
+            console.error(`      Error Code: ${error.code || 'N/A'}`);
+            if (error.details) {
+                console.error(`      Details: ${JSON.stringify(error.details)}`);
+            }
             return [];
         }
     }
@@ -231,7 +242,7 @@ class BookIndexingAgent {
                     return `${book.title} by ${book.author}`;
                 }
             }
-            
+
             // Try to find by content_url containing the filename
             const [urlRows] = await pool.query(
                 'SELECT title, author FROM books WHERE content_url LIKE ?',
@@ -242,7 +253,7 @@ class BookIndexingAgent {
                 console.log(`   📚 Found by URL: "${book.title}" by ${book.author}`);
                 return `${book.title} by ${book.author}`;
             }
-            
+
             return null;
         } catch (error) {
             console.error('   ⚠️ Database lookup failed:', error.message);
