@@ -61,34 +61,11 @@ router.post('/:bookId/content', auth, adminAuth, upload.single('content'), async
             [contentUrl, contentType, parseInt(page_count) || 0, bookId]
         );
 
-        // Trigger automatic indexing for book search
-        let indexingResult = null;
-        try {
-            const BookIndexingAgent = require('../services/bookIndexingAgent');
-            const indexingAgent = new BookIndexingAgent();
-
-            // Use the book title for indexing (or fallback to filename)
-            const bookTitle = books[0].title || `book_${bookId}`;
-            console.log(`📚 Triggering auto-indexing for book: ${bookTitle}`);
-
-            indexingResult = await indexingAgent.indexSingleBook(contentUrl, bookTitle);
-
-            if (indexingResult.success) {
-                console.log(`✅ Book "${bookTitle}" indexed successfully for search!`);
-            } else {
-                console.warn(`⚠️ Book indexing failed: ${indexingResult.error}`);
-            }
-        } catch (indexError) {
-            console.error('📛 Auto-indexing error (book uploaded but not indexed):', indexError.message);
-            // Don't fail the upload, just log the error
-        }
-
         res.json({
             message: 'Book content uploaded successfully',
             contentUrl,
             contentType,
-            pageCount: parseInt(page_count) || 0,
-            indexing: indexingResult || { success: false, error: 'Indexing not triggered' }
+            pageCount: parseInt(page_count) || 0
         });
 
     } catch (error) {
