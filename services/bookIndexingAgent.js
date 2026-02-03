@@ -4,7 +4,7 @@
 // Uses: Azure Blob Storage + Azure Document Intelligence + Azure Cognitive Search
 // ============================================
 
-const { BlobServiceClient } = require('@azure/storage-blob');
+const { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } = require('@azure/storage-blob');
 const { SearchClient, SearchIndexClient, AzureKeyCredential } = require('@azure/search-documents');
 const { DocumentAnalysisClient } = require('@azure/ai-form-recognizer');
 
@@ -15,6 +15,13 @@ class BookIndexingAgent {
             process.env.AZURE_STORAGE_CONNECTION_STRING
         );
         this.bookContainer = 'book-content';
+
+        // Parse storage account credentials for SAS token generation
+        const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING || '';
+        const accountNameMatch = connStr.match(/AccountName=([^;]+)/);
+        const accountKeyMatch = connStr.match(/AccountKey=([^;]+)/);
+        this.storageAccountName = accountNameMatch ? accountNameMatch[1] : '';
+        this.storageAccountKey = accountKeyMatch ? accountKeyMatch[1] : '';
 
         // Azure Document Intelligence (OCR)
         this.documentClient = new DocumentAnalysisClient(
@@ -53,9 +60,12 @@ class BookIndexingAgent {
         try {
             for await (const blob of containerClient.listBlobsFlat()) {
                 if (blob.name.toLowerCase().endsWith('.pdf')) {
+                    // Generate SAS token for this blob (valid for 1 hour)
+                    const sasUrl = await this.generateBlobSasUrl(blob.name);
+
                     pdfs.push({
                         name: blob.name,
-                        url: `${containerClient.url}/${blob.name}`,
+                        url: sasUrl, // Use SAS URL instead of plain URL
                         size: blob.properties.contentLength,
                         lastModified: blob.properties.lastModified
                     });
@@ -68,6 +78,38 @@ class BookIndexingAgent {
 
         console.log(`   ✅ Found ${pdfs.length} PDF files`);
         return pdfs;
+    }
+
+    // Generate SAS URL for a blob (allows Document Intelligence to access private blobs)
+    async generateBlobSasUrl(blobName) {
+        try {
+            const containerClient = this.blobServiceClient.getContainerClient(this.bookContainer);
+            const blobClient = containerClient.getBlobClient(blobName);
+
+            // Create shared key credential
+            const sharedKeyCredential = new StorageSharedKeyCredential(
+                this.storageAccountName,
+                this.storageAccountKey
+            );
+
+            // Generate SAS token valid for 1 hour
+            const expiresOn = new Date();
+            expiresOn.setHours(expiresOn.getHours() + 1);
+
+            const sasToken = generateBlobSASQueryParameters({
+                containerName: this.bookContainer,
+                blobName: blobName,
+                permissions: BlobSASPermissions.parse('r'), // Read only
+                expiresOn: expiresOn
+            }, sharedKeyCredential).toString();
+
+            return `${blobClient.url}?${sasToken}`;
+        } catch (error) {
+            console.error(`   ⚠️ Could not generate SAS for ${blobName}:`, error.message);
+            // Fallback to plain URL
+            const containerClient = this.blobServiceClient.getContainerClient(this.bookContainer);
+            return `${containerClient.url}/${blobName}`;
+        }
     }
 
     // ========================================
