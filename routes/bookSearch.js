@@ -335,7 +335,7 @@ async function runBookSearchPipeline(imageBuffer) {
 Book Identified: "${identificationResult.book_title}" by ${identificationResult.author}
 Confidence: ${identificationResult.confidence}%
 Available in our store: ${isAvailable ? 'YES' : 'NO'}
-${isAvailable ? `Store Title: "${dbBook.title}" - Price: $${dbBook.price}` : ''}
+${isAvailable ? `Store Title: "${dbBook.title}" - Price: ₹${dbBook.price}` : ''}
 `;
 
         const responseResult = await callGroqAgent(
