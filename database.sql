@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
 	);
 
 	-- ================================
-	-- Addresses
+	-- Addresses (for shipping)
 	-- ================================
 	CREATE TABLE IF NOT EXISTS addresses (
 		id INT PRIMARY KEY AUTO_INCREMENT,
@@ -45,6 +45,28 @@ CREATE TABLE IF NOT EXISTS users (
 			REFERENCES users(id)
 			ON DELETE CASCADE ON UPDATE CASCADE
 	);
+
+	-- ================================
+	-- PAYMENT CARDS - NOT NEEDED!
+	-- ================================
+	-- ❌ DO NOT CREATE A payment_cards TABLE
+	-- Razorpay handles all card storage, tokenization, and PCI-DSS compliance
+	-- Storing card details (card numbers, CVV, expiry) on our server would:
+	--   1. Violate PCI-DSS compliance standards
+	--   2. Create massive security liability
+	--   3. Defeat the entire purpose of using a payment gateway
+	-- 
+	-- Razorpay provides:
+	--   - Secure card storage with tokenization
+	--   - Saved cards feature for repeat customers
+	--   - Full PCI-DSS Level 1 compliance
+	--   - Card vaults and encryption
+	-- 
+	-- We only store:
+	--   - razorpay_order_id (for order tracking)
+	--   - razorpay_payment_id (for payment verification)
+	--   - razorpay_signature (for security validation)
+	-- These are stored in the 'orders' table below.
 
 
 	-- ================================

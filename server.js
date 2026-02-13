@@ -98,48 +98,9 @@ app.delete('/api/users/addresses/:id', auth, async (req, res, next) => {
     } catch (e) { next(e); }
 });
 
-// ===== CARDS =====
-app.get('/api/users/cards', auth, async (req, res, next) => {
-    try {
-        const [rows] = await pool.query(
-            'SELECT id, card_name, card_number, expiry, is_default FROM payment_cards WHERE user_id=? ORDER BY is_default DESC, id DESC',
-            [req.user.id]
-        );
-        res.json(rows);
-    } catch (e) { next(e); }
-});
-
-app.post('/api/users/cards', auth, async (req, res, next) => {
-    try {
-        const { name, number, expiry, cvv, default: isDefault } = req.body || {};
-        if (!name || !number || !expiry || !cvv) {
-            return res.status(400).json({ message: 'All card fields are required' });
-        }
-        if (isDefault) {
-            await pool.query('UPDATE payment_cards SET is_default=0 WHERE user_id=?', [req.user.id]);
-        }
-        const [r] = await pool.query(
-            'INSERT INTO payment_cards (user_id, card_name, card_number, expiry, cvv, is_default) VALUES (?,?,?,?,?,?)',
-            [req.user.id, name, number, expiry, cvv, !!isDefault]
-        );
-        res.status(201).json({ id: r.insertId });
-    } catch (e) { next(e); }
-});
-
-app.delete('/api/users/cards/:id', auth, async (req, res, next) => {
-    try {
-        await pool.query('DELETE FROM payment_cards WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-        res.json({ message: 'deleted' });
-    } catch (e) { next(e); }
-});
-
-app.put('/api/users/cards/:id/default', auth, async (req, res, next) => {
-    try {
-        await pool.query('UPDATE payment_cards SET is_default=0 WHERE user_id=?', [req.user.id]);
-        await pool.query('UPDATE payment_cards SET is_default=1 WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-        res.json({ message: 'updated' });
-    } catch (e) { next(e); }
-});
+// ===== PAYMENT CARDS REMOVED =====
+// Razorpay handles all card storage and PCI-DSS compliance
+// No need to store card details on our server
 
 // ----------------------------------------
 // Routers
@@ -162,6 +123,9 @@ app.use('/api/recommendations', require('./routes/recommendations'));
 // Book Search & Indexing (Agentic AI)
 app.use('/api/book-search', require('./routes/bookSearch'));
 app.use('/api/indexing', require('./routes/indexing'));
+
+// Shopping Agent (AI Shopping Assistant)
+app.use('/api/shopping-agent', require('./routes/shoppingAgent'));
 
 // ----------------------------------------
 // 404 handler
