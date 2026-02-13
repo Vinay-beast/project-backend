@@ -103,35 +103,123 @@ RESPOND ONLY WITH VALID JSON:
 }`;
 
 // ============================================
-// BOOK MATCHING (Fuzzy Search)
+// BOOK MATCHING (AI-Powered Semantic Search)
 // ============================================
 
 async function findBookByQuery(bookQuery) {
-    // Try exact match first
+    // Step 1: Try exact match first (fast path)
     const [exactMatch] = await pool.query(
         'SELECT * FROM books WHERE LOWER(title) = LOWER(?) OR LOWER(author) = LOWER(?) LIMIT 1',
         [bookQuery, bookQuery]
     );
 
     if (exactMatch.length > 0) {
+        console.log('✓ Exact match found');
         return exactMatch[0];
     }
 
-    // Try partial match (fuzzy search)
-    const [partialMatch] = await pool.query(
-        `SELECT * FROM books 
-         WHERE LOWER(title) LIKE LOWER(?) 
-         OR LOWER(author) LIKE LOWER(?)
-         OR LOWER(CONCAT(title, ' ', author)) LIKE LOWER(?)
-         LIMIT 1`,
-        [`%${bookQuery}%`, `%${bookQuery}%`, `%${bookQuery}%`]
-    );
+    // Step 2: Get candidate books using word-based SQL filter
+    // Extract meaningful words (remove short words and common stop words)
+    const stopWords = ['and', 'the', 'for', 'with', 'or', 'a', 'an', 'of', 'in', 'to'];
+    const words = bookQuery.toLowerCase()
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.includes(w));
 
-    if (partialMatch.length > 0) {
-        return partialMatch[0];
+    if (words.length === 0) {
+        console.log('✗ No meaningful words in query');
+        return null;
     }
 
-    return null;
+    console.log('📝 Search words extracted:', words);
+
+    // Build OR conditions for each word
+    const conditions = words.map(() =>
+        '(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)'
+    ).join(' OR ');
+
+    const params = words.flatMap(word => [`%${word}%`, `%${word}%`]);
+
+    const [candidates] = await pool.query(
+        `SELECT id, title, author, price, stock, image_url FROM books 
+         WHERE ${conditions}
+         LIMIT 50`,
+        params
+    );
+
+    console.log(`📚 Found ${candidates.length} candidate books`);
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    // If only one candidate, return it directly
+    if (candidates.length === 1) {
+        console.log('✓ Single candidate found');
+        const [fullBook] = await pool.query('SELECT * FROM books WHERE id = ?', [candidates[0].id]);
+        return fullBook[0];
+    }
+
+    // Step 3: Use AI to find best semantic match from candidates
+    const bookList = candidates.map((b, idx) =>
+        `${idx + 1}. ID=${b.id}: "${b.title}" by ${b.author}`
+    ).join('\n');
+
+    const matchPrompt = `You are a book matching expert. The user is searching for a book.
+
+User's search query: "${bookQuery}"
+
+Candidate books from our catalog:
+${bookList}
+
+Find the book that BEST matches the user's query. Consider:
+- Semantic similarity (meaning, not just exact words)
+- Handle typos, extra words, missing words, word order
+- "rich dad and poor dad" should match "Rich Dad Poor Dad"
+- "harry potter first book" should match "Harry Potter and the Philosopher's Stone"
+- "atomic habit" should match "Atomic Habits"
+
+RESPOND ONLY WITH VALID JSON:
+{
+    "book_id": <number>,
+    "confidence": <0-100>,
+    "matched_title": "<book title>"
+}
+
+If no good match exists, use: {"book_id": null, "confidence": 0, "matched_title": null}`;
+
+    try {
+        console.log('🤖 Asking AI to find best match...');
+        const aiResponse = await callGroqAI(matchPrompt, `Find the best matching book for: "${bookQuery}"`);
+
+        // Parse AI response
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        const result = JSON.parse(jsonMatch ? jsonMatch[0] : aiResponse);
+
+        console.log('🎯 AI Match Result:', result);
+
+        // Require at least 50% confidence
+        if (!result.book_id || result.confidence < 50) {
+            console.log('✗ Low confidence or no match');
+            return null;
+        }
+
+        // Fetch full book details
+        const [matchedBooks] = await pool.query('SELECT * FROM books WHERE id = ?', [result.book_id]);
+
+        if (matchedBooks.length > 0) {
+            console.log(`✓ AI matched: "${matchedBooks[0].title}" (${result.confidence}% confidence)`);
+            return matchedBooks[0];
+        }
+
+        return null;
+
+    } catch (error) {
+        console.error('⚠ AI matching failed:', error.message);
+        // Fallback: return first candidate
+        console.log('↩ Falling back to first candidate');
+        const [fullBook] = await pool.query('SELECT * FROM books WHERE id = ?', [candidates[0].id]);
+        return fullBook.length > 0 ? fullBook[0] : null;
+    }
 }
 
 // ============================================
