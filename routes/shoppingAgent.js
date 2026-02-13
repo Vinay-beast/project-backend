@@ -80,17 +80,21 @@ Identify:
 2. book_query: The book name/title they want (clean it up, e.g., "clean code book" -> "Clean Code")
 3. rental_days: Number of days for rental (ONLY 30 or 60 allowed, default 30, extract from "for X days/weeks/months")
 4. delivery_speed: For buy action only - "standard" | "express" | "priority" (extract from "fast/quick delivery" = express, "urgent/same day" = priority, default = standard)
-5. gift_email: Email address if gifting (extract email format)
-6. confidence: 0-100 how confident you are
+5. payment_method: For buy action only - "cod" | "online" (extract from "cod/cash on delivery/pay on delivery" = cod, otherwise = online). IMPORTANT: COD is ONLY for buy action, rent and gift are always online.
+6. gift_email: Email address if gifting (extract email format)
+7. confidence: 0-100 how confident you are
 
 IMPORTANT FOR RENTAL: Only 30 or 60 days allowed. If user says "45 days" or "2 weeks" -> default to 30. If "2 months" or "90 days" -> use 60.
+IMPORTANT FOR PAYMENT: COD is only available for buy action. Rent and gift are always online payment.
 
 Examples:
-- "buy clean code book" -> action: buy, book_query: "Clean Code", delivery_speed: "standard"
-- "buy atomic habits with fast delivery" -> action: buy, book_query: "Atomic Habits", delivery_speed: "express"
-- "rent atomic habits for 30 days" -> action: rent, book_query: "Atomic Habits", rental_days: 30
-- "rent for 2 months" -> rental_days: 60
-- "gift sapiens to user@example.com" -> action: gift, book_query: "Sapiens", gift_email: "user@example.com"
+- "buy clean code book" -> action: buy, book_query: "Clean Code", delivery_speed: "standard", payment_method: "online"
+- "buy atomic habits with cod" -> action: buy, book_query: "Atomic Habits", payment_method: "cod"
+- "buy with cash on delivery" -> action: buy, payment_method: "cod"
+- "buy atomic habits with fast delivery" -> action: buy, book_query: "Atomic Habits", delivery_speed: "express", payment_method: "online"
+- "rent atomic habits for 30 days" -> action: rent, book_query: "Atomic Habits", rental_days: 30, payment_method: "online"
+- "rent for 2 months" -> rental_days: 60, payment_method: "online"
+- "gift sapiens to user@example.com" -> action: gift, book_query: "Sapiens", gift_email: "user@example.com", payment_method: "online"
 
 RESPOND ONLY WITH VALID JSON:
 {
@@ -98,6 +102,7 @@ RESPOND ONLY WITH VALID JSON:
     "book_query": "Book Name",
     "rental_days": 30,
     "delivery_speed": "standard|express|priority",
+    "payment_method": "cod|online",
     "gift_email": "email@example.com or null",
     "confidence": 85
 }`;
@@ -226,7 +231,7 @@ If no good match exists, use: {"book_id": null, "confidence": 0, "matched_title"
 // PREPARE ORDER DATA (NOT CREATED YET)
 // ============================================
 
-async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEmail = null, deliverySpeed = 'standard') {
+async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEmail = null, deliverySpeed = 'standard', paymentMethod = 'online') {
     try {
         // Get book details
         const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
@@ -236,6 +241,12 @@ async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEma
 
         const book = books[0];
         const fullPrice = Number(book.price || 0);
+
+        // Validate payment method for non-buy modes
+        if ((mode === 'rent' || mode === 'gift') && paymentMethod === 'cod') {
+            paymentMethod = 'online'; // Force online for rent/gift
+            console.log('⚠ COD not available for rent/gift, using online payment');
+        }
 
         // Validate rental days (only 30 or 60 allowed)
         let rentalDuration = null;
@@ -276,7 +287,13 @@ async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEma
             etaDays = etaMap[speed] || 5;
         }
 
-        const total = finalPrice + shippingFee;
+        // Calculate COD fee (only for buy with cod)
+        let codFee = 0;
+        if (mode === 'buy' && paymentMethod === 'cod') {
+            codFee = 10; // ₹10 COD handling fee
+        }
+
+        const total = finalPrice + shippingFee + codFee;
 
         // Return prepared order data (NOT created in DB yet)
         // Order will be created when user proceeds to payment
@@ -292,7 +309,7 @@ async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEma
             orderData: {
                 items: [{ book_id: bookId, quantity: 1 }],
                 mode,
-                payment_method: 'razorpay',
+                payment_method: paymentMethod === 'cod' ? 'cod' : 'razorpay',
                 rental_duration: rentalDuration,
                 gift_email: giftEmail,
                 shipping_speed: mode === 'buy' ? (deliverySpeed || 'standard') : null,
@@ -302,11 +319,13 @@ async function prepareOrderData(userId, bookId, mode, rentalDays = null, giftEma
                 bookPrice: fullPrice,
                 finalPrice: Number(finalPrice.toFixed(2)),
                 shippingFee: shippingFee,
+                codFee: codFee,
                 total: Number(total.toFixed(2)),
                 rentalDays: rentalDuration,
                 deliverySpeed: mode === 'buy' ? (deliverySpeed || 'standard') : null,
                 etaDays: mode === 'buy' ? etaDays : null
             },
+            paymentMethod: paymentMethod,
             giftEmail: giftEmail
         };
 
@@ -533,6 +552,18 @@ router.post('/process', auth, async (req, res) => {
             }
         }
 
+        // Validate and normalize payment method
+        let paymentMethod = 'online'; // default
+        if (intent.action === 'buy' && intent.payment_method === 'cod') {
+            paymentMethod = 'cod';
+        } else if (intent.payment_method === 'cod' && (intent.action === 'rent' || intent.action === 'gift')) {
+            return res.status(400).json({
+                success: false,
+                message: `COD is only available for buying books. ${intent.action === 'rent' ? 'Rentals' : 'Gifts'} require online payment.`,
+                suggestion: `Try: "${intent.action} ${intent.book_query}" (online payment only)`
+            });
+        }
+
         // STEP 3: Prepare order data (NOT creating order yet)
         console.log('\n💳 Step 3: Preparing order data...');
         const preparedOrder = await prepareOrderData(
@@ -541,7 +572,8 @@ router.post('/process', auth, async (req, res) => {
             intent.action,
             intent.rental_days,
             intent.gift_email,
-            intent.delivery_speed
+            intent.delivery_speed,
+            paymentMethod
         );
 
         console.log('Order prepared (not created yet)');
@@ -549,29 +581,47 @@ router.post('/process', auth, async (req, res) => {
         // STEP 4: Generate friendly response
         let message = '';
         let deliveryInfo = '';
+        let paymentInfo = '';
 
         if (intent.action === 'buy') {
             const speedNames = { standard: 'Standard', express: 'Express', priority: 'Priority' };
             const speedName = speedNames[preparedOrder.pricing.deliverySpeed] || 'Standard';
             deliveryInfo = `${speedName} delivery (₹${preparedOrder.pricing.shippingFee}, ${preparedOrder.pricing.etaDays} days)`;
-            message = `Great! "${book.title}" by ${book.author} is ready for purchase with ${speedName} delivery.`;
+
+            if (paymentMethod === 'cod') {
+                paymentInfo = `Cash on Delivery (₹${preparedOrder.pricing.codFee} COD fee)`;
+                message = `Great! "${book.title}" by ${book.author} is ready for purchase with ${speedName} delivery and COD payment.`;
+            } else {
+                paymentInfo = 'Online Payment (Razorpay)';
+                message = `Great! "${book.title}" by ${book.author} is ready for purchase with ${speedName} delivery.`;
+            }
         } else if (intent.action === 'rent') {
+            paymentInfo = 'Online Payment (Razorpay)';
             message = `Perfect! "${book.title}" by ${book.author} is ready as a ${preparedOrder.pricing.rentalDays}-day rental.`;
         } else if (intent.action === 'gift') {
+            paymentInfo = 'Online Payment (Razorpay)';
             message = `Wonderful! "${book.title}" by ${book.author} will be gifted to ${intent.gift_email}.`;
         }
+
+        // Determine if online payment is needed or COD
+        const needsOnlinePayment = paymentMethod !== 'cod';
+        const instructions = paymentMethod === 'cod'
+            ? 'Click "Place Order" to confirm your COD order'
+            : 'Click "Proceed to Payment" to create order and complete purchase';
 
         // Return success with prepared order data (order NOT created yet)
         return res.json({
             success: true,
             message,
             deliveryInfo,
+            paymentInfo,
             action: intent.action,
             book: preparedOrder.book,
             orderData: preparedOrder.orderData, // Data to create order
             pricing: preparedOrder.pricing,
-            needsPayment: true,
-            instructions: 'Click "Proceed to Payment" to create order and complete purchase'
+            paymentMethod: paymentMethod,
+            needsPayment: needsOnlinePayment,
+            instructions: instructions
         });
 
     } catch (error) {
@@ -596,6 +646,8 @@ router.get('/suggestions', (req, res) => {
     res.json({
         suggestions: [
             "buy Clean Code book",
+            "buy Atomic Habits with cod",
+            "buy with cash on delivery",
             "buy Atomic Habits with express delivery",
             "rent Atomic Habits for 30 days",
             "rent for 60 days",
@@ -604,6 +656,7 @@ router.get('/suggestions', (req, res) => {
         ],
         examples: {
             buy: "buy [book name] with [standard/express/priority] delivery",
+            buy_cod: "buy [book name] with cod",
             rent: "rent [book name] for [30 or 60] days",
             gift: "gift [book name] to [email]"
         },
@@ -611,6 +664,10 @@ router.get('/suggestions', (req, res) => {
             { speed: 'standard', fee: 30, days: 5, label: 'Standard (5 days) - ₹30' },
             { speed: 'express', fee: 70, days: 3, label: 'Express (3 days) - ₹70' },
             { speed: 'priority', fee: 120, days: 1, label: 'Priority (1 day) - ₹120' }
+        ],
+        paymentOptions: [
+            { method: 'online', label: 'Online Payment (Razorpay)', fee: 0, available: ['buy', 'rent', 'gift'] },
+            { method: 'cod', label: 'Cash on Delivery', fee: 40, available: ['buy'] }
         ],
         rentalOptions: [
             { days: 30, label: '30 days' },
