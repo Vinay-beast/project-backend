@@ -155,7 +155,7 @@ router.put('/profile', auth, upload.single('profile_pic'), async (req, res) => {
 
         // Respond with updated profile summary
         const [rows] = await pool.query(
-            'SELECT id, name, email, phone, bio, profile_pic FROM users WHERE id = ?',
+            'SELECT id, name, email, phone, bio, profile_pic, CASE WHEN password IS NULL THEN 0 ELSE 1 END as has_password FROM users WHERE id = ?',
             [req.user.id]
         );
         return res.json(rows[0] || { message: 'Profile updated' });
