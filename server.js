@@ -127,6 +127,9 @@ app.use('/api/indexing', require('./routes/indexing'));
 // Shopping Agent (AI Shopping Assistant)
 app.use('/api/shopping-agent', require('./routes/shoppingAgent'));
 
+// Resolution Agent (AI Support & Payment Resolution)
+app.use('/api/resolution-agent', require('./routes/resolutionAgent'));
+
 // ----------------------------------------
 // 404 handler
 // ----------------------------------------
