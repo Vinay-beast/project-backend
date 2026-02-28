@@ -84,7 +84,8 @@ async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
 // Generate summary using Gemini
 async function generateSummary(text, bookTitle, pageRange) {
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        // Use gemini-pro (stable model available in v1beta)
+        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
         const prompt = `You are a helpful book summary assistant. Please provide a comprehensive summary of the following text from the book "${bookTitle}" (${pageRange}).
 
