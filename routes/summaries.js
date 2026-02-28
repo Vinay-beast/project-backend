@@ -5,11 +5,13 @@ const pool = require('../config/database');
 const fetch = require('node-fetch');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// pdf-parse has different export styles depending on environment
-let pdfParse;
+// pdf-parse - handle different module export styles
+let PDFParse;
 try {
     const pdfParseModule = require('pdf-parse');
-    pdfParse = pdfParseModule.default || pdfParseModule;
+    // The module exports PDFParse class
+    PDFParse = pdfParseModule.PDFParse || pdfParseModule.default || pdfParseModule;
+    console.log('PDFParse loaded, type:', typeof PDFParse);
 } catch (e) {
     console.error('Failed to load pdf-parse:', e);
 }
@@ -46,27 +48,37 @@ async function checkBookAccess(bookId, userId) {
 // Extract text from specific pages of PDF
 async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
     try {
-        if (!pdfParse || typeof pdfParse !== 'function') {
-            console.error('pdfParse type:', typeof pdfParse, pdfParse);
-            throw new Error('pdf-parse library not loaded correctly');
+        if (!PDFParse) {
+            throw new Error('pdf-parse library not loaded');
         }
 
-        // Custom page render function to extract text from specific pages
-        const options = {
-            // This extracts all text, we'll filter by page later
-            max: endPage || 0 // 0 means all pages
-        };
-
         console.log('📖 Parsing PDF buffer of size:', pdfBuffer.length);
-        const data = await pdfParse(pdfBuffer, options);
-        console.log('✅ PDF parsed successfully, pages:', data.numpages);
+        
+        let data;
+        // Try different ways to use PDFParse
+        if (typeof PDFParse === 'function') {
+            // If it's a function, call it directly
+            data = await PDFParse(pdfBuffer);
+        } else if (PDFParse.prototype && typeof PDFParse.prototype.parse === 'function') {
+            // If it's a class with parse method
+            const parser = new PDFParse();
+            data = await parser.parse(pdfBuffer);
+        } else if (typeof PDFParse.parse === 'function') {
+            // If it has a static parse method
+            data = await PDFParse.parse(pdfBuffer);
+        } else {
+            // Try instantiating and passing buffer
+            const parser = new PDFParse(pdfBuffer);
+            data = await parser.getText ? parser.getText() : parser;
+        }
+
+        console.log('✅ PDF parsed successfully, pages:', data.numpages || data.numPages || 'unknown');
 
         // pdf-parse doesn't support page range directly, so we extract all
-        // For large PDFs, this could be optimized with a different library
         return {
-            text: data.text,
-            totalPages: data.numpages,
-            info: data.info
+            text: data.text || '',
+            totalPages: data.numpages || data.numPages || 0,
+            info: data.info || {}
         };
     } catch (error) {
         console.error('PDF parsing error:', error.message);
