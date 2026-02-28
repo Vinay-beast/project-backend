@@ -39,24 +39,27 @@ async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
     try {
         // Dynamic import of pdfjs-dist (ES module)
         const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-        
+
         console.log('📖 Parsing PDF buffer of size:', pdfBuffer.length);
-        
+
+        // Convert Buffer to Uint8Array (required by pdfjs-dist)
+        const uint8Array = new Uint8Array(pdfBuffer);
+
         // Load the PDF document
-        const loadingTask = pdfjsLib.getDocument({ data: pdfBuffer });
+        const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
         const pdfDoc = await loadingTask.promise;
-        
+
         const totalPages = pdfDoc.numPages;
         console.log(`📄 PDF has ${totalPages} pages`);
-        
+
         // Determine page range
         const start = Math.max(1, startPage || 1);
         const end = Math.min(totalPages, endPage || totalPages);
-        
+
         console.log(`📝 Extracting text from pages ${start} to ${end}`);
-        
+
         let fullText = '';
-        
+
         // Extract text from each page in range
         for (let pageNum = start; pageNum <= end; pageNum++) {
             const page = await pdfDoc.getPage(pageNum);
@@ -64,9 +67,9 @@ async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
             const pageText = textContent.items.map(item => item.str).join(' ');
             fullText += `\n--- Page ${pageNum} ---\n${pageText}\n`;
         }
-        
+
         console.log(`✅ Extracted ${fullText.length} characters from ${end - start + 1} pages`);
-        
+
         return {
             text: fullText,
             totalPages: totalPages,
