@@ -285,3 +285,27 @@ ALTER TABLE reviews MODIFY COLUMN book_id VARCHAR(20) NOT NULL;
 ALTER TABLE order_items ADD CONSTRAINT fk_items_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE gifts ADD CONSTRAINT fk_gifts_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE reviews ADD CONSTRAINT fk_reviews_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- ================================
+-- Reading Progress Table
+-- ================================
+CREATE TABLE IF NOT EXISTS reading_progress (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    book_id VARCHAR(20) NOT NULL,
+    current_page INT NOT NULL DEFAULT 1,
+    total_pages INT NOT NULL DEFAULT 1,
+    progress_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_user_book_progress (user_id, book_id),
+    CONSTRAINT fk_progress_user FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_progress_book FOREIGN KEY (book_id)
+        REFERENCES books(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX idx_progress_user ON reading_progress(user_id);
+CREATE INDEX idx_progress_last_read ON reading_progress(last_read_at DESC);
