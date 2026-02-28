@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     current_page INT NOT NULL DEFAULT 1,
     total_pages INT NOT NULL DEFAULT 1,
     progress_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_read_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_user_book_progress (user_id, book_id),
     CONSTRAINT fk_progress_user FOREIGN KEY (user_id)

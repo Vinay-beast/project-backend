@@ -53,8 +53,8 @@ router.post('/', auth, async (req, res) => {
 
     try {
         await pool.query(
-            `INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, progress_percent)
-             VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, progress_percent, last_read_at)
+             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
              ON DUPLICATE KEY UPDATE 
                 current_page = VALUES(current_page),
                 total_pages = VALUES(total_pages),
