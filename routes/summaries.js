@@ -3,8 +3,16 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const pool = require('../config/database');
 const fetch = require('node-fetch');
-const pdfParse = require('pdf-parse');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+// pdf-parse has different export styles depending on environment
+let pdfParse;
+try {
+    const pdfParseModule = require('pdf-parse');
+    pdfParse = pdfParseModule.default || pdfParseModule;
+} catch (e) {
+    console.error('Failed to load pdf-parse:', e);
+}
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -38,14 +46,21 @@ async function checkBookAccess(bookId, userId) {
 // Extract text from specific pages of PDF
 async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
     try {
+        if (!pdfParse || typeof pdfParse !== 'function') {
+            console.error('pdfParse type:', typeof pdfParse, pdfParse);
+            throw new Error('pdf-parse library not loaded correctly');
+        }
+
         // Custom page render function to extract text from specific pages
         const options = {
             // This extracts all text, we'll filter by page later
             max: endPage || 0 // 0 means all pages
         };
 
+        console.log('📖 Parsing PDF buffer of size:', pdfBuffer.length);
         const data = await pdfParse(pdfBuffer, options);
-        
+        console.log('✅ PDF parsed successfully, pages:', data.numpages);
+
         // pdf-parse doesn't support page range directly, so we extract all
         // For large PDFs, this could be optimized with a different library
         return {
@@ -54,8 +69,8 @@ async function extractPdfText(pdfBuffer, startPage = 1, endPage = null) {
             info: data.info
         };
     } catch (error) {
-        console.error('PDF parsing error:', error);
-        throw new Error('Failed to extract text from PDF');
+        console.error('PDF parsing error:', error.message);
+        throw new Error('Failed to extract text from PDF: ' + error.message);
     }
 }
 
@@ -133,14 +148,14 @@ router.post('/generate', auth, async (req, res) => {
         console.log(`📝 Extracted ${extracted.text.length} characters from ${extracted.totalPages} pages`);
 
         if (!extracted.text || extracted.text.trim().length < 100) {
-            return res.status(400).json({ 
-                message: 'Could not extract enough text from PDF. The book may be scanned images.' 
+            return res.status(400).json({
+                message: 'Could not extract enough text from PDF. The book may be scanned images.'
             });
         }
 
         // Generate summary using Gemini
-        const pageRange = endPage 
-            ? `Pages ${startPage || 1} to ${endPage}` 
+        const pageRange = endPage
+            ? `Pages ${startPage || 1} to ${endPage}`
             : `Full book (${extracted.totalPages} pages)`;
 
         console.log(`🤖 Generating summary for: ${access.title}, ${pageRange}`);
@@ -160,9 +175,9 @@ router.post('/generate', auth, async (req, res) => {
 
     } catch (error) {
         console.error('Summary generation error:', error);
-        res.status(500).json({ 
-            message: 'Failed to generate summary', 
-            error: error.message 
+        res.status(500).json({
+            message: 'Failed to generate summary',
+            error: error.message
         });
     }
 });
