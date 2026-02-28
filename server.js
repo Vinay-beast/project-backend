@@ -120,6 +120,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/google-books', require('./routes/googleBooks'));
 app.use('/api/recommendations', require('./routes/recommendations'));
 app.use('/api/reading-progress', require('./routes/readingProgress'));
+app.use('/api/summaries', require('./routes/summaries'));
 
 // Book Search & Indexing (Agentic AI)
 app.use('/api/book-search', require('./routes/bookSearch'));
