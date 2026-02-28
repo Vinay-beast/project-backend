@@ -319,6 +319,21 @@ ${JSON.stringify(orderData, null, 2)}
         };
         console.log(`\n⚡ Resolution: ${resolutionResult.action} (confidence: ${resolutionResult.confidence})`);
 
+        // ── Deterministic override — never trust the LLM when we have clear evidence ──
+        // If it's a payment issue AND we found a failed order with a payment ID → always auto_resolve
+        if (category === 'payment_issue' && orderData.failedOrders?.length > 0) {
+            const fo = orderData.failedOrders[0];
+            if (fo.razorpay_payment_id) {
+                resolutionResult.action = 'auto_resolve';
+                resolutionResult.confidence = 'high';
+                resolutionResult.resolution_details = `Found payment issue on order #${fo.id} for ₹${fo.total} (${fo.book_titles}). Payment ID ${fo.razorpay_payment_id} is captured. Ready to auto-resolve.`;
+                agentInsights.resolution.action = 'auto_resolve';
+                agentInsights.resolution.confidence = 'high';
+                agentInsights.resolution.details = resolutionResult.resolution_details;
+                console.log(`   🔒 Deterministic override → auto_resolve (payment ID found)`);
+            }
+        }
+
         // ── Agent 4: Response Composer ──
         const composerContext = `
 Intent: ${category}
@@ -348,8 +363,17 @@ Urgency: ${intentResult.urgency}
             agentInsights,
             // Include failed order data for the frontend resolve action
             failedOrders: orderData.failedOrders || [],
-            recentOrders: (orderData.recentOrders || orderData.lastOrder || []).slice(0, 3)
         };
+
+        // ── Force action button whenever action is auto_resolve ──
+        // The Composer LLM may forget to set show_action_button=true — make it deterministic
+        if (resolutionResult.action === 'auto_resolve' && orderData.failedOrders?.length > 0) {
+            response.showActionButton = true;
+            response.actionButtonText = response.actionButtonText || '🔧 Resolve My Payment';
+            response.actionType = 'resolve_payment';
+        }
+
+        response.recentOrders = (orderData.recentOrders || orderData.lastOrder || []).slice(0, 3);
 
         res.json(response);
 
