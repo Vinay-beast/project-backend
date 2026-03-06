@@ -11,7 +11,8 @@ const GOOGLE_BOOKS_API = 'https://www.googleapis.com/books/v1/volumes';
 // Helper function to fetch from Google Books API
 function fetchGoogleBooks(query, maxResults = 20) {
     return new Promise((resolve, reject) => {
-        const url = `${GOOGLE_BOOKS_API}?q=${encodeURIComponent(query)}&maxResults=${maxResults}&printType=books`;
+        const apiKey = process.env.GOOGLE_BOOKS_API_KEY ? `&key=${process.env.GOOGLE_BOOKS_API_KEY}` : '';
+        const url = `${GOOGLE_BOOKS_API}?q=${encodeURIComponent(query)}&maxResults=${maxResults}&printType=books${apiKey}`;
 
         https.get(url, (res) => {
             let data = '';
@@ -120,7 +121,8 @@ router.get('/details/:googleBooksId', auth, adminOnly, async (req, res) => {
     try {
         const { googleBooksId } = req.params;
 
-        const url = `${GOOGLE_BOOKS_API}/${googleBooksId}`;
+        const apiKey = process.env.GOOGLE_BOOKS_API_KEY ? `?key=${process.env.GOOGLE_BOOKS_API_KEY}` : '';
+        const url = `${GOOGLE_BOOKS_API}/${googleBooksId}${apiKey}`;
 
         const result = await new Promise((resolve, reject) => {
             https.get(url, (httpRes) => {
