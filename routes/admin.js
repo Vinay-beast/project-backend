@@ -154,5 +154,26 @@ router.delete('/books/:id', async (req, res) => {
     }
 });
 
+/**
+ * PUT /api/admin/orders/:id/status
+ * Admin can update the status of any order
+ */
+router.put('/orders/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const allowed = ['Pending', 'Delivered', 'Cancelled', 'Active', 'Completed'];
+        if (!allowed.includes(status)) {
+            return res.status(400).json({ message: `Invalid status. Allowed: ${allowed.join(', ')}` });
+        }
+        const [result] = await pool.query('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Order not found' });
+        res.json({ success: true, id, status });
+    } catch (e) {
+        console.error('Admin update order status failed:', e);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 
 module.exports = router;
