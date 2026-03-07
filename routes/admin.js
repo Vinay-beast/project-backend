@@ -155,6 +155,57 @@ router.delete('/books/:id', async (req, res) => {
 });
 
 /**
+ * DELETE /api/admin/orders/unpaid
+ * Delete all orders where payment_status is 'pending' or 'failed' (never paid).
+ * Restores book stock for buy-mode orders.
+ */
+router.delete('/orders/unpaid', async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // Find all unpaid buy-mode orders so we can restore stock
+        const [unpaidBuy] = await conn.query(
+            `SELECT o.id, oi.book_id, oi.quantity
+             FROM orders o
+             JOIN order_items oi ON oi.order_id = o.id
+             WHERE o.payment_status IN ('pending', 'failed')
+               AND o.mode = 'buy'`
+        );
+
+        // Restore stock for each item
+        for (const row of unpaidBuy) {
+            await conn.query(
+                'UPDATE books SET stock = stock + ? WHERE id = ?',
+                [row.quantity, row.book_id]
+            );
+        }
+
+        // Delete order_items first (FK), then the orders
+        const [unpaidOrders] = await conn.query(
+            `SELECT id FROM orders WHERE payment_status IN ('pending', 'failed')`
+        );
+        const ids = unpaidOrders.map(o => o.id);
+
+        let deleted = 0;
+        if (ids.length) {
+            await conn.query(`DELETE FROM order_items WHERE order_id IN (${ids.map(() => '?').join(',')})`, ids);
+            const [result] = await conn.query(`DELETE FROM orders WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+            deleted = result.affectedRows;
+        }
+
+        await conn.commit();
+        res.json({ success: true, deleted });
+    } catch (e) {
+        await conn.rollback();
+        console.error('Delete unpaid orders failed:', e);
+        res.status(500).json({ message: 'Server error' });
+    } finally {
+        conn.release();
+    }
+});
+
+/**
  * PUT /api/admin/orders/:id/status
  * Admin can update the status of any order
  */

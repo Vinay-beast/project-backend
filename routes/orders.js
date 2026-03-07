@@ -70,8 +70,31 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ message: 'gift_email is required for gifts' });
         }
 
-        // ✅ For Razorpay payments, allow creation but set status to 'pending'
-        // Order will be completed only after payment verification
+        // Auto-clean this user's own unpaid/failed Razorpay orders before creating a new one.
+        // Stock is restored for buy-mode items so inventory stays accurate.
+        try {
+            const [staleOrders] = await pool.query(
+                `SELECT o.id, o.mode FROM orders o
+                 WHERE o.user_id = ? AND o.payment_status IN ('pending', 'failed')
+                   AND o.payment_method != 'cod'`,
+                [req.user.id]
+            );
+            if (staleOrders.length) {
+                const staleIds = staleOrders.map(o => o.id);
+                const staleBuyIds = staleOrders.filter(o => o.mode === 'buy').map(o => o.id);
+                if (staleBuyIds.length) {
+                    const [staleItems] = await pool.query(
+                        `SELECT book_id, quantity FROM order_items WHERE order_id IN (${staleBuyIds.map(() => '?').join(',')})`,
+                        staleBuyIds
+                    );
+                    for (const si of staleItems) {
+                        await pool.query('UPDATE books SET stock = stock + ? WHERE id = ?', [si.quantity, si.book_id]);
+                    }
+                }
+                await pool.query(`DELETE FROM order_items WHERE order_id IN (${staleIds.map(() => '?').join(',')})`, staleIds);
+                await pool.query(`DELETE FROM orders WHERE id IN (${staleIds.map(() => '?').join(',')})`, staleIds);
+            }
+        } catch (_) { /* non-fatal */ }
 
         const conn = await pool.getConnection();
         await conn.beginTransaction();
