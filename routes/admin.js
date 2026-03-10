@@ -226,5 +226,62 @@ router.put('/orders/:id/status', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/admin/stats
+ * Dashboard analytics: revenue 7d, payment status breakdown, top books, low stock, new users
+ */
+router.get('/stats', async (req, res) => {
+    try {
+        const [revenueRows] = await pool.query(`
+            SELECT DATE(created_at) as day, SUM(total) as revenue, COUNT(*) as count
+            FROM orders
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+              AND payment_status = 'completed'
+            GROUP BY DATE(created_at)
+            ORDER BY day ASC
+        `);
+        const [paymentRows] = await pool.query(`
+            SELECT COALESCE(payment_status, 'unknown') as status, COUNT(*) as count
+            FROM orders
+            GROUP BY payment_status
+        `);
+        const [topBooksRows] = await pool.query(`
+            SELECT b.title, b.author, SUM(oi.quantity) as total_sold
+            FROM books b
+            JOIN order_items oi ON b.id = oi.book_id
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.payment_status = 'completed'
+            GROUP BY b.id
+            ORDER BY total_sold DESC
+            LIMIT 5
+        `);
+        const [lowStockRows] = await pool.query(`
+            SELECT id, title, author, stock
+            FROM books
+            WHERE stock <= 5
+            ORDER BY stock ASC
+            LIMIT 10
+        `);
+        const [newUsersRows] = await pool.query(`
+            SELECT id, name, email, created_at
+            FROM users
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            ORDER BY created_at DESC
+        `);
+        res.json({
+            success: true,
+            revenueLast7Days: revenueRows,
+            paymentStatus: paymentRows,
+            topBooks: topBooksRows,
+            lowStock: lowStockRows,
+            newUsers: newUsersRows,
+            newUsersCount: newUsersRows.length
+        });
+    } catch (e) {
+        console.error('Admin stats error:', e);
+        res.status(500).json({ message: 'Failed to fetch stats' });
+    }
+});
+
 
 module.exports = router;
