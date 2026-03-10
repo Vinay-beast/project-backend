@@ -230,7 +230,8 @@ async function getFailedPaymentOrders(userId) {
     const [rows] = await pool.query(`
         SELECT o.*, 
                GROUP_CONCAT(b.title SEPARATOR ', ') as book_titles,
-               GROUP_CONCAT(b.id) as book_ids
+               GROUP_CONCAT(b.id) as book_ids,
+               (SELECT COUNT(*) FROM orders o2 WHERE o2.user_id = o.user_id AND o2.id <= o.id) as user_order_number
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN books b ON oi.book_id = b.id
@@ -326,7 +327,7 @@ ${JSON.stringify(orderData, null, 2)}
             if (fo.razorpay_payment_id) {
                 resolutionResult.action = 'auto_resolve';
                 resolutionResult.confidence = 'high';
-                resolutionResult.resolution_details = `Found payment issue on order #${fo.id} for ₹${fo.total} (${fo.book_titles}). Payment ID ${fo.razorpay_payment_id} is captured. Ready to auto-resolve.`;
+                resolutionResult.resolution_details = `Found payment issue on order #${fo.user_order_number || fo.id} for ₹${fo.total} (${fo.book_titles}). Payment ID ${fo.razorpay_payment_id} is captured. Ready to auto-resolve.`;
                 agentInsights.resolution.action = 'auto_resolve';
                 agentInsights.resolution.confidence = 'high';
                 agentInsights.resolution.details = resolutionResult.resolution_details;
@@ -461,6 +462,7 @@ router.get('/payment-issues', auth, async (req, res) => {
             count: failedOrders.length,
             orders: failedOrders.map(o => ({
                 id: o.id,
+                user_order_number: o.user_order_number,
                 total: o.total,
                 book_titles: o.book_titles,
                 payment_status: o.payment_status,
