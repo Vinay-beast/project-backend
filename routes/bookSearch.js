@@ -324,7 +324,7 @@ async function runBookSearchPipeline(imageBuffer) {
                 title: dbBook.title,
                 author: dbBook.author,
                 price: dbBook.price,
-                cover_image: dbBook.cover_image
+                image_url: dbBook.image_url
             } : null
         };
 
@@ -376,7 +376,8 @@ ${isAvailable ? `Store Title: "${dbBook.title}" - Price: ₹${dbBook.price}` : '
                         author: dbBook.author,
                         price: dbBook.price,
                         rental_price: dbBook.rental_price,
-                        cover_image: dbBook.cover_image,
+                        image_url: dbBook.image_url,
+                        google_books_id: dbBook.google_books_id,
                         description: dbBook.description
                     }
                 },
