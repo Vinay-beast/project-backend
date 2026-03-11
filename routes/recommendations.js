@@ -1,21 +1,24 @@
 // backend/routes/recommendations.js
 // TRUE MULTI-AGENT AI RECOMMENDATION SYSTEM
 // Features: 5 Specialized Agents + Coordinator Agent
-// Uses: Google Gemini API (same key as summaries)
+// Uses: Groq API (FREE) with Llama 3.3 70B
 
 const router = require('express').Router();
 const pool = require('../config/database');
 const auth = require('../middleware/auth');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const https = require('https');
 
 // ============================================
-// GEMINI API CONFIGURATION
+// GROQ API CONFIGURATION (FREE!)
 // ============================================
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = 'api.groq.com';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
-if (!process.env.GEMINI_API_KEY) {
-    console.warn('⚠️ GEMINI_API_KEY not set in environment variables');
+// Check if API key is configured
+if (!GROQ_API_KEY) {
+    console.warn('⚠️ GROQ_API_KEY not set in environment variables');
 }
 
 // ============================================
@@ -145,7 +148,7 @@ RESPOND ONLY WITH VALID JSON:
 };
 
 // ============================================
-// GEMINI API CALL FUNCTION (replaces callGroqAgent)
+// GROQ API CALL FUNCTION
 // ============================================
 
 async function callGroqAgent(agentType, userMessage, context = '') {
@@ -155,36 +158,82 @@ async function callGroqAgent(agentType, userMessage, context = '') {
     console.log(`${agent.name} starting...`);
     console.log(`   Role: ${agent.role}`);
 
-    const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        generationConfig: {
+    return new Promise((resolve, reject) => {
+        const requestBody = JSON.stringify({
+            model: GROQ_MODEL,
+            messages: [
+                { role: 'system', content: agent.systemPrompt },
+                { role: 'user', content: context ? `${context}\n\nUser Query: ${userMessage}` : userMessage }
+            ],
             temperature: 0.3,
-            maxOutputTokens: 1024,
-            responseMimeType: 'application/json',
-        },
-        systemInstruction: agent.systemPrompt,
+            max_tokens: 1024
+        });
+
+        const options = {
+            hostname: GROQ_API_URL,
+            path: '/openai/v1/chat/completions',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Length': Buffer.byteLength(requestBody)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let body = '';
+            res.on('data', chunk => body += chunk);
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(body);
+
+                    if (result.error) {
+                        console.log(`   ❌ Error: ${result.error.message}`);
+                        reject(new Error(result.error.message));
+                        return;
+                    }
+
+                    const content = result.choices[0]?.message?.content || '';
+                    console.log(`   ✅ Response received`);
+
+                    // Try to parse JSON from response
+                    try {
+                        // Extract JSON from response (handle markdown code blocks)
+                        let jsonStr = content;
+                        if (content.includes('```json')) {
+                            jsonStr = content.split('```json')[1].split('```')[0].trim();
+                        } else if (content.includes('```')) {
+                            jsonStr = content.split('```')[1].split('```')[0].trim();
+                        }
+
+                        const parsed = JSON.parse(jsonStr);
+                        console.log(`   📤 Parsed output:`, JSON.stringify(parsed).substring(0, 100) + '...');
+                        resolve(parsed);
+                    } catch (parseErr) {
+                        console.log(`   ⚠️ Could not parse JSON, returning raw`);
+                        resolve({ raw: content });
+                    }
+                } catch (e) {
+                    console.log(`   ❌ Parse error:`, e.message);
+                    reject(e);
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            console.log(`   ❌ Request error:`, e.message);
+            reject(e);
+        });
+
+        req.setTimeout(30000, () => {
+            console.log(`   ⚠️ Timeout`);
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        req.write(requestBody);
+        req.end();
     });
-
-    const prompt = context ? `${context}\n\nUser Query: ${userMessage}` : userMessage;
-
-    const result = await model.generateContent(prompt);
-    const content = result.response.text();
-    console.log(`   ✅ Response received`);
-
-    try {
-        let jsonStr = content;
-        if (content.includes('```json')) {
-            jsonStr = content.split('```json')[1].split('```')[0].trim();
-        } else if (content.includes('```')) {
-            jsonStr = content.split('```')[1].split('```')[0].trim();
-        }
-        const parsed = JSON.parse(jsonStr);
-        console.log(`   📤 Parsed output:`, JSON.stringify(parsed).substring(0, 100) + '...');
-        return parsed;
-    } catch (parseErr) {
-        console.log(`   ⚠️ Could not parse JSON, returning raw`);
-        return { raw: content };
-    }
 }
 
 // ============================================
@@ -625,7 +674,6 @@ ${finalBooks.map((b, i) => `${i + 1}. "${b.title}" by ${b.author} (₹${b.price}
                 }
             },
             debug: {
-                engine: 'gemini-1.5-flash',
                 totalAgentCalls: 6,
                 processingTimeMs: endTime - startTime,
                 booksSearched: books.length,
