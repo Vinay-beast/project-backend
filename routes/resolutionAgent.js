@@ -197,8 +197,8 @@ async function callGroqAgent(agentType, userMessage, context = '') {
 async function getUserOrders(userId, filters = {}) {
     let query = `
         SELECT o.*, 
-               GROUP_CONCAT(b.title SEPARATOR ', ') as book_titles,
-               GROUP_CONCAT(b.id) as book_ids
+               STRING_AGG(, '') as book_titles,
+               STRING_AGG(, ',') as book_ids
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN books b ON oi.book_id = b.id
@@ -229,8 +229,8 @@ async function getUserOrders(userId, filters = {}) {
 async function getFailedPaymentOrders(userId) {
     const [rows] = await pool.query(`
         SELECT o.*, 
-               GROUP_CONCAT(b.title SEPARATOR ', ') as book_titles,
-               GROUP_CONCAT(b.id) as book_ids,
+               STRING_AGG(, '') as book_titles,
+               STRING_AGG(, ',') as book_ids,
                (SELECT COUNT(*) FROM orders o2 WHERE o2.user_id = o.user_id AND o2.id <= o.id) as user_order_number
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -399,7 +399,7 @@ router.post('/demo/simulate-failure', auth, async (req, res) => {
 
         // Pick a random book from the store
         const [books] = await conn.query(
-            'SELECT id, title, price FROM books WHERE stock > 0 ORDER BY RAND() LIMIT 1'
+            'SELECT id, title, price FROM books WHERE stock > 0 ORDER BY RANDOM() LIMIT 1'
         );
         if (!books.length) {
             await conn.rollback();
@@ -515,7 +515,7 @@ router.post('/resolve-payment/:orderId', auth, async (req, res) => {
                 SET payment_status = 'completed',
                     status = 'Pending',
                     delivery_eta = ?,
-                    notes = CONCAT(IFNULL(notes, ''), ' | RESOLVED via Resolution Agent'),
+                    notes = CONCAT(COALESCE(notes, ''), ' | RESOLVED via Resolution Agent'),
                     updated_at = NOW()
                 WHERE id = ? AND user_id = ?
             `, [deliveryEta, orderId, req.user.id]);
@@ -537,7 +537,7 @@ router.post('/resolve-payment/:orderId', auth, async (req, res) => {
         // For real orders — mark as needing review (in production would trigger refund flow)
         await pool.query(`
             UPDATE orders 
-            SET notes = CONCAT(IFNULL(notes, ''), ' | Resolution requested by user at ${new Date().toISOString()}'),
+            SET notes = CONCAT(COALESCE(notes, ''), ' | Resolution requested by user at ${new Date().toISOString()}'),
                 updated_at = NOW()
             WHERE id = ? AND user_id = ?
         `, [orderId, req.user.id]);
@@ -563,7 +563,7 @@ router.get('/order-status/:orderId', auth, async (req, res) => {
     try {
         const [orders] = await pool.query(`
             SELECT o.*, 
-                   GROUP_CONCAT(b.title SEPARATOR ', ') as book_titles
+                   STRING_AGG(, '') as book_titles
             FROM orders o
             LEFT JOIN order_items oi ON o.id = oi.order_id
             LEFT JOIN books b ON oi.book_id = b.id
