@@ -32,8 +32,11 @@ CREATE TABLE books (
     sample_url VARCHAR(512),
     content_type VARCHAR(10) DEFAULT 'pdf',
     page_count INT DEFAULT 0,
+    category VARCHAR(100),
+    google_books_id VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
 
 -- ================================
 -- ADDRESSES
