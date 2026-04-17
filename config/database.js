@@ -8,7 +8,9 @@ const pool = new Pool({
 // Helper function to convert MySQL '?' to Postgres '$1, $2...'
 const convertQuery = (text) => {
     let index = 1;
-    let pgQuery = text.replace(/\?/g, () => `$${index++}`);
+    // Postges uses "= ANY($1)" for arrays instead of "IN ($1)"
+    let pgQuery = text.replace(/\bIN\s*\(\s*\?\s*\)/gi, '= ANY(?)');
+    pgQuery = pgQuery.replace(/\?/g, () => `$${index++}`);
 
     // Automatically append 'RETURNING id' to INSERT statements if not present
     if (/INSERT\s+INTO/i.test(pgQuery) && !/\bRETURNING\b/i.test(pgQuery)) {
