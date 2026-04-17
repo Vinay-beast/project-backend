@@ -198,7 +198,8 @@ async function getUserOrders(userId, filters = {}) {
     let query = `
         SELECT o.*, 
                STRING_AGG(b.title, ', ') as book_titles,
-               STRING_AGG(b.id, ',') as book_ids
+               STRING_AGG(b.id, ',') as book_ids,
+               (SELECT COUNT(*) FROM orders o2 WHERE o2.user_id = o.user_id AND o2.id <= o.id) as user_order_number
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN books b ON oi.book_id = b.id
