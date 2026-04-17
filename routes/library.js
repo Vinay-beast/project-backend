@@ -40,8 +40,8 @@ router.get('/', auth, async (req, res) => {
         let owned = [];
         if (ownedIds.length) {
             const [rows] = await conn.query(
-                `SELECT id, title, author, image_url FROM books WHERE id IN (${ownedIds.map(() => '?').join(',')})`,
-                ownedIds
+                `SELECT id, title, author, image_url FROM books WHERE id = ANY(?)`,
+                [ownedIds]
             );
             owned = rows.map(b => ({ book: b, purchased_at: null }));
         }
@@ -50,8 +50,8 @@ router.get('/', auth, async (req, res) => {
         if (rented.length) {
             const ids = rented.map(x => x.book_id);
             const [rows] = await conn.query(
-                `SELECT id, title, author, image_url FROM books WHERE id IN (${ids.map(() => '?').join(',')})`,
-                ids
+                `SELECT id, title, author, image_url FROM books WHERE id = ANY(?)`,
+                [ids]
             );
             const byId = new Map(rows.map(r => [r.id, r]));
             rentedOut = rented.map(r => ({ book: byId.get(r.book_id), rental_end: r.rental_end }));
