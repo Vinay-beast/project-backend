@@ -9,7 +9,7 @@ const pool = new Pool({
 const convertQuery = (text) => {
     let index = 1;
     let pgQuery = text.replace(/\?/g, () => `$${index++}`);
-    
+
     // Automatically append 'RETURNING id' to INSERT statements if not present
     if (/^\s*INSERT\s+INTO/i.test(pgQuery) && !/\bRETURNING\b/i.test(pgQuery)) {
         pgQuery = pgQuery.replace(/;+\s*$/, '') + ' RETURNING id';
