@@ -11,22 +11,27 @@ const convertQuery = (text) => {
     let pgQuery = text.replace(/\?/g, () => `$${index++}`);
 
     // Automatically append 'RETURNING id' to INSERT statements if not present
-    if (/^\s*INSERT\s+INTO/i.test(pgQuery) && !/\bRETURNING\b/i.test(pgQuery)) {
+    if (/INSERT\s+INTO/i.test(pgQuery) && !/\bRETURNING\b/i.test(pgQuery)) {
         pgQuery = pgQuery.replace(/;+\s*$/, '') + ' RETURNING id';
     }
     return pgQuery;
 };
 
-const handleResult = (result) => {
+const handleResult = (result, pgQuery) => {
     if (result.command === 'SELECT') {
         return [result.rows, result.fields];
     }
     // For INSERT, UPDATE, DELETE, mysql2 returns an object
     const mysqlResult = {
-        insertId: (result.rows && result.rows.length > 0 && result.rows[0].id) ? result.rows[0].id : null,
+        insertId: (result.rows && result.rows.length > 0 && result.rows[0].id !== undefined) ? result.rows[0].id : null,
         affectedRows: result.rowCount,
         changedRows: result.rowCount
     };
+    if (result.command === 'INSERT') {
+        console.log('INSERT query executed:', pgQuery);
+        console.log('pg returned rows:', result.rows);
+        console.log('Mapped mysqlResult:', mysqlResult);
+    }
     return [mysqlResult, result.fields];
 };
 
@@ -34,12 +39,12 @@ const dbWrapper = {
     query: async (text, params) => {
         const pgQuery = convertQuery(text);
         const result = await pool.query(pgQuery, params);
-        return handleResult(result);
+        return handleResult(result, pgQuery);
     },
     execute: async (text, params) => {
         const pgQuery = convertQuery(text);
         const result = await pool.query(pgQuery, params);
-        return handleResult(result);
+        return handleResult(result, pgQuery);
     },
     getConnection: async () => {
         const client = await pool.connect();
@@ -47,12 +52,12 @@ const dbWrapper = {
             query: async (text, params) => {
                 const pgQuery = convertQuery(text);
                 const result = await client.query(pgQuery, params);
-                return handleResult(result);
+                return handleResult(result, pgQuery);
             },
             execute: async (text, params) => {
                 const pgQuery = convertQuery(text);
                 const result = await client.query(pgQuery, params);
-                return handleResult(result);
+                return handleResult(result, pgQuery);
             },
             beginTransaction: () => client.query('BEGIN'),
             commit: () => client.query('COMMIT'),
