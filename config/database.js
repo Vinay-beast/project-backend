@@ -8,20 +8,38 @@ const pool = new Pool({
 // Helper function to convert MySQL '?' to Postgres '$1, $2...'
 const convertQuery = (text) => {
     let index = 1;
-    return text.replace(/\?/g, () => `$${index++}`);
+    let pgQuery = text.replace(/\?/g, () => `$${index++}`);
+    
+    // Automatically append 'RETURNING id' to INSERT statements if not present
+    if (/^\s*INSERT\s+INTO/i.test(pgQuery) && !/\bRETURNING\b/i.test(pgQuery)) {
+        pgQuery = pgQuery.replace(/;+\s*$/, '') + ' RETURNING id';
+    }
+    return pgQuery;
 };
 
-// Wrapper to make 'pg' act exactly like 'mysql2/promise'
+const handleResult = (result) => {
+    if (result.command === 'SELECT') {
+        return [result.rows, result.fields];
+    }
+    // For INSERT, UPDATE, DELETE, mysql2 returns an object
+    const mysqlResult = {
+        insertId: (result.rows && result.rows.length > 0 && result.rows[0].id) ? result.rows[0].id : null,
+        affectedRows: result.rowCount,
+        changedRows: result.rowCount
+    };
+    return [mysqlResult, result.fields];
+};
+
 const dbWrapper = {
     query: async (text, params) => {
         const pgQuery = convertQuery(text);
         const result = await pool.query(pgQuery, params);
-        return [result.rows, result.fields];
+        return handleResult(result);
     },
     execute: async (text, params) => {
         const pgQuery = convertQuery(text);
         const result = await pool.query(pgQuery, params);
-        return [result.rows, result.fields];
+        return handleResult(result);
     },
     getConnection: async () => {
         const client = await pool.connect();
@@ -29,12 +47,12 @@ const dbWrapper = {
             query: async (text, params) => {
                 const pgQuery = convertQuery(text);
                 const result = await client.query(pgQuery, params);
-                return [result.rows, result.fields];
+                return handleResult(result);
             },
             execute: async (text, params) => {
                 const pgQuery = convertQuery(text);
                 const result = await client.query(pgQuery, params);
-                return [result.rows, result.fields];
+                return handleResult(result);
             },
             beginTransaction: () => client.query('BEGIN'),
             commit: () => client.query('COMMIT'),
