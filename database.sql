@@ -37,7 +37,6 @@ CREATE TABLE books (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
 -- ================================
 -- ADDRESSES
 -- ================================
@@ -140,6 +139,7 @@ CREATE TABLE reviews (
     rating SMALLINT NOT NULL,
     review_text TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, book_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
@@ -163,19 +163,45 @@ CREATE TABLE reading_progress (
 );
 
 -- ================================
--- INDEXES
+-- INDEXES (Performance)
 -- ================================
-CREATE INDEX idx_books_title ON books(title);
-CREATE INDEX idx_books_author ON books(author);
-CREATE INDEX idx_orders_user_date ON orders(user_id, created_at);
-CREATE INDEX idx_items_order ON order_items(order_id);
-CREATE INDEX idx_reviews_book ON reviews(book_id);
+
+-- Books: search, listing, filtering
+CREATE INDEX IF NOT EXISTS idx_books_title ON books(title);
+CREATE INDEX IF NOT EXISTS idx_books_author ON books(author);
+CREATE INDEX IF NOT EXISTS idx_books_category ON books(LOWER(category));
+CREATE INDEX IF NOT EXISTS idx_books_stock ON books(stock);
+CREATE INDEX IF NOT EXISTS idx_books_created_at ON books(created_at DESC);
+
+-- Orders: user lookup, payment status filtering
+CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_user_date ON orders(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);
+
+-- Order items: JOIN performance for recommendations and library
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_book_id ON order_items(book_id);
+
+-- Reviews: book rating lookups
+CREATE INDEX IF NOT EXISTS idx_reviews_book_id ON reviews(book_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_user_book ON reviews(user_id, book_id);
+
+-- Users: auth middleware lookup
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- Wishlist & gifts
+CREATE INDEX IF NOT EXISTS idx_wishlist_user_id ON wishlist(user_id);
+CREATE INDEX IF NOT EXISTS idx_gifts_recipient_user ON gifts(recipient_user_id);
+CREATE INDEX IF NOT EXISTS idx_gifts_claim_token ON gifts(claim_token);
+
+-- Reading progress
+CREATE INDEX IF NOT EXISTS idx_reading_progress_user ON reading_progress(user_id);
 
 -- ================================
 -- VIEW
 -- ================================
 CREATE VIEW user_orders_details AS
-SELECT 
+SELECT
     u.id AS user_id,
     u.name AS user_name,
     o.id AS order_id,
